@@ -20,13 +20,13 @@ import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.collection.IsIn.in;
-import static tech.pegasys.web3signer.core.signing.KeyType.BLS;
-import static tech.pegasys.web3signer.core.signing.KeyType.SECP256K1;
+import static tech.pegasys.web3signer.signing.KeyType.BLS;
+import static tech.pegasys.web3signer.signing.KeyType.SECP256K1;
 
 import tech.pegasys.teku.bls.BLSKeyPair;
 import tech.pegasys.teku.bls.BLSPublicKey;
 import tech.pegasys.teku.bls.BLSSecretKey;
-import tech.pegasys.web3signer.core.signing.KeyType;
+import tech.pegasys.web3signer.signing.KeyType;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -146,7 +146,7 @@ public class KeyIdentifiersAcceptanceTest extends KeyIdentifiersAcceptanceTestBa
     final String keyVaultName = System.getenv("AZURE_KEY_VAULT_NAME");
     final String tenantId = System.getenv("AZURE_TENANT_ID");
     final String PUBLIC_KEY_HEX_STRING =
-        "09b02f8a5fddd222ade4ea4528faefc399623af3f736be3c44f03e2df22fb792f3931a4d9573d333ca74343305762a753388c3422a86d98b713fc91c1ea04842";
+        "964f00253459f1f43c7a7720a0db09a328d4ee6f18838015023135d7fc921f1448de34d05de7a1f72a7b5c9f6c76931d7ab33d0f0846ccce5452063bd20f5809";
 
     metadataFileHelpers.createAzureKeyYamlFileAt(
         testDirectory.resolve(PUBLIC_KEY_HEX_STRING + ".yaml"),

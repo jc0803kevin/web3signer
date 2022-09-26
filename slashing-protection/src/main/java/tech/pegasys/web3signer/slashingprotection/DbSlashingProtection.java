@@ -12,9 +12,7 @@
  */
 package tech.pegasys.web3signer.slashingprotection;
 
-import static com.fasterxml.jackson.databind.SerializationFeature.FLUSH_AFTER_WRITE_VALUE;
 import static org.jdbi.v3.core.transaction.TransactionIsolationLevel.READ_COMMITTED;
-import static org.jdbi.v3.core.transaction.TransactionIsolationLevel.SERIALIZABLE;
 import static tech.pegasys.web3signer.slashingprotection.DbLocker.lockForValidator;
 
 import tech.pegasys.web3signer.slashingprotection.DbLocker.LockType;
@@ -22,10 +20,10 @@ import tech.pegasys.web3signer.slashingprotection.dao.LowWatermarkDao;
 import tech.pegasys.web3signer.slashingprotection.dao.MetadataDao;
 import tech.pegasys.web3signer.slashingprotection.dao.SignedAttestationsDao;
 import tech.pegasys.web3signer.slashingprotection.dao.SignedBlocksDao;
-import tech.pegasys.web3signer.slashingprotection.dao.Validator;
 import tech.pegasys.web3signer.slashingprotection.dao.ValidatorsDao;
+import tech.pegasys.web3signer.slashingprotection.interchange.EmptyDataIncrementalInterchangeV5Exporter;
+import tech.pegasys.web3signer.slashingprotection.interchange.IncrementalExporter;
 import tech.pegasys.web3signer.slashingprotection.interchange.InterchangeManager;
-import tech.pegasys.web3signer.slashingprotection.interchange.InterchangeModule;
 import tech.pegasys.web3signer.slashingprotection.interchange.InterchangeV5Manager;
 import tech.pegasys.web3signer.slashingprotection.validator.AttestationValidator;
 import tech.pegasys.web3signer.slashingprotection.validator.BlockValidator;
@@ -34,61 +32,33 @@ import tech.pegasys.web3signer.slashingprotection.validator.GenesisValidatorRoot
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.google.common.collect.BiMap;
-import com.google.common.collect.HashBiMap;
-import com.google.common.collect.Streams;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.units.bigints.UInt64;
+import org.jdbi.v3.core.Handle;
 import org.jdbi.v3.core.Jdbi;
 
 public class DbSlashingProtection implements SlashingProtection {
-
   private static final Logger LOG = LogManager.getLogger();
+
   private final Jdbi jdbi;
   private final ValidatorsDao validatorsDao;
   private final SignedBlocksDao signedBlocksDao;
   private final SignedAttestationsDao signedAttestationsDao;
-  private final BiMap<Bytes, Integer> registeredValidators;
   private final InterchangeManager interchangeManager;
   private final LowWatermarkDao lowWatermarkDao;
   private final GenesisValidatorRootValidator gvrValidator;
   private final DbPruner dbPruner;
   private final long pruningEpochsToKeep;
   private final long pruningSlotsPerEpoch;
-
-  public DbSlashingProtection(
-      final Jdbi jdbi,
-      final Jdbi pruningJdbi,
-      final ValidatorsDao validatorsDao,
-      final SignedBlocksDao signedBlocksDao,
-      final SignedAttestationsDao signedAttestationsDao,
-      final MetadataDao metadataDao,
-      final LowWatermarkDao lowWatermarkDao,
-      final long pruningEpochsToKeep,
-      final long pruningSlotsPerEpoch) {
-    this(
-        jdbi,
-        pruningJdbi,
-        validatorsDao,
-        signedBlocksDao,
-        signedAttestationsDao,
-        metadataDao,
-        lowWatermarkDao,
-        pruningEpochsToKeep,
-        pruningSlotsPerEpoch,
-        HashBiMap.create());
-  }
+  private final RegisteredValidators registeredValidators;
 
   public DbSlashingProtection(
       final Jdbi jdbi,
@@ -100,7 +70,7 @@ public class DbSlashingProtection implements SlashingProtection {
       final LowWatermarkDao lowWatermarkDao,
       final long pruningEpochsToKeep,
       final long pruningSlotsPerEpoch,
-      final BiMap<Bytes, Integer> registeredValidators) {
+      final RegisteredValidators registeredValidators) {
     this.jdbi = jdbi;
     this.validatorsDao = validatorsDao;
     this.signedBlocksDao = signedBlocksDao;
@@ -115,11 +85,7 @@ public class DbSlashingProtection implements SlashingProtection {
             signedBlocksDao,
             signedAttestationsDao,
             metadataDao,
-            lowWatermarkDao,
-            new ObjectMapper()
-                .registerModule(new InterchangeModule())
-                .configure(FLUSH_AFTER_WRITE_VALUE, true)
-                .enable(SerializationFeature.INDENT_OUTPUT));
+            lowWatermarkDao);
     this.dbPruner =
         new DbPruner(pruningJdbi, signedBlocksDao, signedAttestationsDao, lowWatermarkDao);
     this.pruningEpochsToKeep = pruningEpochsToKeep;
@@ -138,13 +104,51 @@ public class DbSlashingProtection implements SlashingProtection {
   }
 
   @Override
-  public void export(final OutputStream output) {
+  public void importDataWithFilter(final InputStream input, final List<String> pubkeys) {
+    try {
+      LOG.info("Importing slashing protection database for keys: " + String.join(",", pubkeys));
+      interchangeManager.importDataWithFilter(input, pubkeys);
+      LOG.info("Import complete");
+    } catch (final IOException | UnsupportedOperationException | IllegalArgumentException e) {
+      throw new RuntimeException("Failed to import database content", e);
+    }
+  }
+
+  @Override
+  public void exportData(final OutputStream output) {
     try {
       LOG.info("Exporting slashing protection database");
-      interchangeManager.export(output);
+      interchangeManager.exportData(output);
       LOG.info("Export complete");
     } catch (IOException e) {
       throw new RuntimeException("Failed to export database content", e);
+    }
+  }
+
+  @Override
+  public void exportDataWithFilter(final OutputStream output, final List<String> pubkeys) {
+    try {
+      LOG.info("Exporting slashing protection database for keys: " + String.join(",", pubkeys));
+      interchangeManager.exportDataWithFilter(output, pubkeys);
+      LOG.info("Export complete");
+    } catch (IOException e) {
+      throw new RuntimeException("Failed to export database content", e);
+    }
+  }
+
+  @Override
+  public IncrementalExporter createIncrementalExporter(final OutputStream out) {
+    // when GVR is empty, there is no slashing data to export, hence return a No-Op exporter that
+    // can nicely close OutputStream.
+    if (!gvrValidator.genesisValidatorRootExists()) {
+      return new EmptyDataIncrementalInterchangeV5Exporter(out);
+    }
+
+    try {
+      return interchangeManager.createIncrementalExporter(out);
+    } catch (final IOException e) {
+      throw new RuntimeException(
+          "Failed to initialise incremental exporter for slashing protection data", e);
     }
   }
 
@@ -155,7 +159,7 @@ public class DbSlashingProtection implements SlashingProtection {
       final UInt64 sourceEpoch,
       final UInt64 targetEpoch,
       final Bytes32 genesisValidatorsRoot) {
-    final int validatorId = validatorId(publicKey);
+    final int validatorId = registeredValidators.mustGetValidatorIdForPublicKey(publicKey);
 
     if (!gvrValidator.checkGenesisValidatorsRootAndInsertIfEmpty(genesisValidatorsRoot)) {
       return false;
@@ -164,6 +168,16 @@ public class DbSlashingProtection implements SlashingProtection {
     return jdbi.inTransaction(
         READ_COMMITTED,
         handle -> {
+          lockForValidator(handle, LockType.ATTESTATION, validatorId);
+
+          if (!isEnabled(handle, validatorId)) {
+            LOG.warn(
+                "Signing attempted for disabled validator {}. To sign with this validator"
+                    + " you must import the validator keystore using the key manager import API",
+                publicKey);
+            return false;
+          }
+
           final AttestationValidator attestationValidator =
               new AttestationValidator(
                   handle,
@@ -178,8 +192,6 @@ public class DbSlashingProtection implements SlashingProtection {
           if (attestationValidator.sourceGreaterThanTargetEpoch()) {
             return false;
           }
-
-          lockForValidator(handle, LockType.ATTESTATION, validatorId);
 
           if (attestationValidator.hasSourceOlderThanWatermark()
               || attestationValidator.hasTargetOlderThanWatermark()
@@ -201,18 +213,26 @@ public class DbSlashingProtection implements SlashingProtection {
       final Bytes signingRoot,
       final UInt64 blockSlot,
       final Bytes32 genesisValidatorsRoot) {
-    final int validatorId = validatorId(publicKey);
+    final int validatorId = registeredValidators.mustGetValidatorIdForPublicKey(publicKey);
     if (!gvrValidator.checkGenesisValidatorsRootAndInsertIfEmpty(genesisValidatorsRoot)) {
       return false;
     }
     return jdbi.inTransaction(
         READ_COMMITTED,
         h -> {
+          lockForValidator(h, LockType.BLOCK, validatorId);
+
+          if (!isEnabled(h, validatorId)) {
+            LOG.warn(
+                "Signing attempted for disabled validator {}. To sign with this validator"
+                    + " you must import the validator keystore using the key manager import API",
+                publicKey);
+            return false;
+          }
+
           final BlockValidator blockValidator =
               new BlockValidator(
                   h, signingRoot, blockSlot, validatorId, signedBlocksDao, lowWatermarkDao);
-
-          lockForValidator(h, LockType.BLOCK, validatorId);
 
           if (blockValidator.isOlderThanWatermark()
               || blockValidator.directlyConflictsWithExistingEntry()) {
@@ -226,54 +246,53 @@ public class DbSlashingProtection implements SlashingProtection {
   }
 
   @Override
-  public void registerValidators(final List<Bytes> validators) {
-    if (validators.isEmpty()) {
-      return;
-    }
-
-    jdbi.useTransaction(
-        SERIALIZABLE,
-        h -> {
-          final List<Validator> existingRegisteredValidators =
-              validatorsDao.retrieveValidators(h, validators);
-          final List<Bytes> existingValidatorsPublicKeys =
-              existingRegisteredValidators.stream()
-                  .map(Validator::getPublicKey)
-                  .collect(Collectors.toList());
-
-          final List<Bytes> validatorsMissingFromDb = new ArrayList<>(validators);
-          validatorsMissingFromDb.removeAll(existingValidatorsPublicKeys);
-
-          final List<Validator> newlyRegisteredValidators =
-              validatorsDao.registerValidators(h, validatorsMissingFromDb);
-
-          Streams.concat(existingRegisteredValidators.stream(), newlyRegisteredValidators.stream())
-              .forEach(v -> registeredValidators.put(v.getPublicKey(), v.getId()));
-        });
-  }
-
-  @Override
   public void prune() {
-    final Set<Integer> validatorKeys = registeredValidators.values();
+    final Set<Integer> validatorKeys = registeredValidators.validatorIds();
     LOG.info("Pruning slashing protection database for {} validators", validatorKeys.size());
     final AtomicInteger pruningCount = new AtomicInteger();
     validatorKeys.forEach(
         v -> {
-          LOG.debug(
+          LOG.trace(
               "Pruning {} of {} validator {}",
               pruningCount::incrementAndGet,
               validatorKeys::size,
-              () -> registeredValidators.inverse().get(v));
+              () -> registeredValidators.getPublicKeyForValidatorId(v));
           dbPruner.pruneForValidator(v, pruningEpochsToKeep, pruningSlotsPerEpoch);
         });
     LOG.info("Pruning slashing protection database complete");
   }
 
-  private int validatorId(final Bytes publicKey) {
-    final Integer validatorId = registeredValidators.get(publicKey);
-    if (validatorId == null) {
-      throw new IllegalStateException("Unregistered validator for " + publicKey);
-    }
-    return validatorId;
+  @Override
+  public boolean hasSlashingProtectionDataFor(final Bytes publicKey) {
+    final Optional<Integer> maybeValidatorId =
+        registeredValidators.getValidatorIdForPublicKey(publicKey);
+    return maybeValidatorId
+        .map(
+            validatorId ->
+                jdbi.inTransaction(
+                    READ_COMMITTED, handle -> validatorsDao.hasSigned(handle, validatorId)))
+        .orElse(false);
+  }
+
+  @Override
+  public boolean isEnabledValidator(final Bytes publicKey) {
+    final int validatorId = registeredValidators.mustGetValidatorIdForPublicKey(publicKey);
+    return jdbi.inTransaction(handle -> isEnabled(handle, validatorId));
+  }
+
+  @Override
+  public void updateValidatorEnabledStatus(final Bytes publicKey, final boolean enabled) {
+    final int validatorId = registeredValidators.mustGetValidatorIdForPublicKey(publicKey);
+    jdbi.useTransaction(
+        READ_COMMITTED,
+        handle -> {
+          lockForValidator(handle, LockType.ATTESTATION, validatorId);
+          lockForValidator(handle, LockType.BLOCK, validatorId);
+          validatorsDao.setEnabled(handle, validatorId, enabled);
+        });
+  }
+
+  private boolean isEnabled(final Handle handle, final int validatorId) {
+    return validatorsDao.isEnabled(handle, validatorId);
   }
 }

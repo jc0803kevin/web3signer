@@ -14,11 +14,14 @@ package tech.pegasys.web3signer.dsl.signer;
 
 import static java.util.Collections.emptyList;
 
-import tech.pegasys.web3signer.core.config.AzureKeyVaultParameters;
 import tech.pegasys.web3signer.core.config.TlsOptions;
 import tech.pegasys.web3signer.dsl.tls.TlsCertificateDefinition;
+import tech.pegasys.web3signer.signing.config.AwsSecretsManagerParameters;
+import tech.pegasys.web3signer.signing.config.AzureKeyVaultParameters;
+import tech.pegasys.web3signer.signing.config.KeystoresParameters;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +48,10 @@ public class SignerConfigurationBuilder {
   private Path slashingProtectionDbPoolConfigurationFile = null;
   private String mode;
   private AzureKeyVaultParameters azureKeyVaultParameters;
+  private AwsSecretsManagerParameters awsSecretsManagerParameters;
   private Map<String, String> web3SignerEnvironment;
+  private Duration startupTimeout =
+      Boolean.getBoolean("debugSubProcess") ? Duration.ofHours(1) : Duration.ofSeconds(30);
   private boolean enableSlashing = false;
   private String slashingProtectionDbUrl;
   private Path slashingExportPath;
@@ -57,6 +63,10 @@ public class SignerConfigurationBuilder {
   private long slashingPruningSlotsPerEpoch = 1;
   private long slashingPruningInterval = 1;
   private Long altairForkEpoch = null;
+  private Long bellatrixForkEpoch = null;
+  private String network = null;
+  private boolean keyManagerApiEnabled = false;
+  private KeystoresParameters keystoresParameters;
 
   public SignerConfigurationBuilder withLogLevel(final Level logLevel) {
     this.logLevel = logLevel;
@@ -116,6 +126,18 @@ public class SignerConfigurationBuilder {
   public SignerConfigurationBuilder withAzureKeyVaultParameters(
       final AzureKeyVaultParameters azureKeyVaultParameters) {
     this.azureKeyVaultParameters = azureKeyVaultParameters;
+    return this;
+  }
+
+  public SignerConfigurationBuilder withAwsSecretsManagerParameters(
+      final AwsSecretsManagerParameters awsSecretsManagerParameters) {
+    this.awsSecretsManagerParameters = awsSecretsManagerParameters;
+    return this;
+  }
+
+  public SignerConfigurationBuilder withKeystoresParameters(
+      final KeystoresParameters keystoresParameters) {
+    this.keystoresParameters = keystoresParameters;
     return this;
   }
 
@@ -201,6 +223,31 @@ public class SignerConfigurationBuilder {
     return this;
   }
 
+  public SignerConfigurationBuilder withBellatrixForkEpoch(final long bellatrixForkEpoch) {
+    this.bellatrixForkEpoch = bellatrixForkEpoch;
+    return this;
+  }
+
+  public SignerConfigurationBuilder withNetwork(final String network) {
+    this.network = network;
+    return this;
+  }
+
+  public SignerConfigurationBuilder withNetwork(final Path networkConfigFile) {
+    this.network = networkConfigFile.toString();
+    return this;
+  }
+
+  public SignerConfigurationBuilder withKeyManagerApiEnabled(final boolean keyManagerApiEnabled) {
+    this.keyManagerApiEnabled = keyManagerApiEnabled;
+    return this;
+  }
+
+  public SignerConfigurationBuilder withStartupTimeout(final Duration startupTimeout) {
+    this.startupTimeout = startupTimeout;
+    return this;
+  }
+
   public SignerConfiguration build() {
     if (mode == null) {
       throw new IllegalArgumentException("Mode cannot be null");
@@ -216,6 +263,8 @@ public class SignerConfigurationBuilder {
         metricsCategories,
         metricsEnabled,
         Optional.ofNullable(azureKeyVaultParameters),
+        Optional.ofNullable(awsSecretsManagerParameters),
+        Optional.ofNullable(keystoresParameters),
         Optional.ofNullable(serverTlsOptions),
         Optional.ofNullable(overriddenCaTrustStore),
         Optional.ofNullable(slashingProtectionDbUrl),
@@ -223,6 +272,7 @@ public class SignerConfigurationBuilder {
         slashingProtectionDbPassword,
         mode,
         Optional.ofNullable(web3SignerEnvironment),
+        startupTimeout,
         enableSlashing,
         Optional.ofNullable(slashingExportPath),
         Optional.ofNullable(slashingImportPath),
@@ -233,6 +283,9 @@ public class SignerConfigurationBuilder {
         swaggerUIEnabled,
         useConfigFile,
         Optional.ofNullable(slashingProtectionDbPoolConfigurationFile),
-        Optional.ofNullable(altairForkEpoch));
+        Optional.ofNullable(altairForkEpoch),
+        Optional.ofNullable(bellatrixForkEpoch),
+        Optional.ofNullable(network),
+        keyManagerApiEnabled);
   }
 }

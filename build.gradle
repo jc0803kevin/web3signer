@@ -24,19 +24,20 @@ buildscript {
     maven { url "https://artifacts.consensys.net/public/maven/maven/" }
   }
   dependencies {
-    classpath 'tech.pegasys.internal.license.reporter:license-reporter:1.0.0'
+    classpath 'tech.pegasys.internal.license.reporter:license-reporter:1.0.1'
+    classpath 'org.owasp:dependency-check-gradle:7.1.0.1'
   }
 }
 
 plugins {
   id 'java-test-fixtures'
-  id 'com.diffplug.spotless' version '5.12.5'
+  id 'com.diffplug.spotless' version '6.2.0'
   id 'com.github.ben-manes.versions' version '0.27.0'
-  id 'com.github.jk1.dependency-license-report' version '1.16'
-  id 'io.spring.dependency-management' version '1.0.9.RELEASE'
-  id 'me.champeau.gradle.jmh' version '0.5.0' apply false
-  id 'net.ltgt.errorprone' version '2.0.1'
-  id 'org.ajoberstar.grgit' version '4.1.0'
+  id 'com.github.jk1.dependency-license-report' version '2.0'
+  id 'io.spring.dependency-management' version '1.0.11.RELEASE'
+  id 'me.champeau.gradle.jmh' version '0.5.3' apply false
+  id 'net.ltgt.errorprone' version '2.0.2'
+  id 'org.ajoberstar.grgit' version '4.1.1'
 }
 
 if (!JavaVersion.current().java11Compatible) {
@@ -65,7 +66,7 @@ gradle.startParameter.taskNames.each {
 }
 gradle.startParameter.taskNames = expandedTaskList.flatten()
 
-// Gets a integer command argument, passed with -Pname=x, or the defaut if not provided.
+// Gets a integer command argument, passed with -Pname=x, or the default if not provided.
 def _intCmdArg(name, defaultValue) {
   return project.hasProperty(name) ? project.property(name) as int : defaultValue
 }
@@ -91,11 +92,12 @@ allprojects {
   apply plugin: 'io.spring.dependency-management'
   apply plugin: 'jacoco'
   apply plugin: 'net.ltgt.errorprone'
+  apply plugin: 'org.owasp.dependencycheck'
   apply from: "${rootDir}/gradle/versions.gradle"
 
   version = rootProject.version
 
-  jacoco { toolVersion = '0.8.6' }
+  jacoco { toolVersion = '0.8.7' }
 
   task sourcesJar(type: Jar, dependsOn: classes) {
     classifier = 'sources'
@@ -111,12 +113,11 @@ allprojects {
   targetCompatibility = 11
 
   repositories {
-    jcenter()
     mavenCentral()
-    maven { url "https://hyperledger.jfrog.io/artifactory/besu-maven" }
-    maven { url "https://hyperledger-org.bintray.com/besu-repo/" }
     maven { url "https://artifacts.consensys.net/public/maven/maven/" }
     maven { url "https://artifacts.consensys.net/public/teku/maven/" }
+    maven { url "https://hyperledger.jfrog.io/artifactory/besu-maven" }
+    maven { url "https://hyperledger-org.bintray.com/besu-repo/" }
     maven { url "https://jitpack.io" }
   }
 
@@ -152,6 +153,18 @@ allprojects {
     }
   }
 
+  dependencyCheck {
+    failBuildOnCVSS = 4 // Fail on medium CVSS severity
+    suppressionFile = "${rootDir}/gradle/owasp-suppression.xml"
+    skipConfigurations = [
+      'integrationTestCompileClasspath',
+      'integrationTestRuntimeClasspath'
+    ]
+    skipProjects = [
+      ':acceptance-tests'
+    ]
+  }
+
   tasks.withType(JavaCompile) {
     options.compilerArgs += [
       '-Xlint:unchecked',
@@ -175,7 +188,7 @@ allprojects {
       check('ImmutableEnumChecker', CheckSeverity.OFF)
       // This is a style check instead of an error-prone pattern.
       check('UnnecessaryParentheses', CheckSeverity.OFF)
-      // Lazy impl causes excess CPU usage O(n) of non-final fiield when it should be O(1).
+      // Lazy impl causes excess CPU usage O(n) of non-final field when it should be O(1).
       check('FieldCanBeFinal', CheckSeverity.OFF)
       // Incorrectly fires when there are no java.time.* alternatives
       check('PreferJavaTimeOverload', CheckSeverity.OFF)
@@ -238,6 +251,9 @@ task deploy() {}
 
 licenseReport {
   outputDir = "${buildDir}/reports/licenses"
+  excludes = [
+    'com.fasterxml.jackson:jackson-bom'
+  ]
   allowedLicensesFile = new File("${rootDir}/gradle/license-report-config/allowed-licenses.json")
   filters = [
     new LicenseBundleNormalizer(["bundlePath": new File("${rootDir}/gradle/license-report-config/license-normalizer.json"), "createDefaultTransformationRules": true])
@@ -338,7 +354,14 @@ applicationDefaultJvmArgs = [
   "-Dvertx.disableFileCPResolving=true",
   // We shutdown log4j ourselves, as otherwise his shutdown hook runs before our own and whatever
   // happens during shutdown is not logged.
-  "-Dlog4j.shutdownHookEnabled=false"
+  "-Dlog4j.shutdownHookEnabled=false",
+  "-Dlog4j2.formatMsgNoLookups=true",
+  // address netty warnings
+  "--add-opens",
+  "java.base/jdk.internal.misc=ALL-UNNAMED",
+  "--add-opens",
+  "java.base/java.nio=ALL-UNNAMED",
+  "-Dio.netty.tryReflectionSetAccessible=true",
 ]
 
 run {
@@ -410,83 +433,150 @@ check.dependsOn checkLicense
 // simple for use in docker
 tasks.register("dockerDistUntar") {
   dependsOn distTar
-  dependsOn distZip
-  def dockerBuildDir = "build/docker-web3signer/"
+  def dockerBuildPath = "build/docker-web3signer/"
   def distTarFile = distTar.outputs.files.singleFile
   def distTarFileName = distTar.outputs.files.singleFile.name.replace(".tar.gz", "")
 
   doFirst {
-    new File(dockerBuildDir).mkdir()
+    def dockerBuildDir = new File(dockerBuildPath)
+    dockerBuildDir.deleteDir()
+    dockerBuildDir.mkdir()
     copy {
       from tarTree(distTarFile)
-      into(dockerBuildDir)
+      into(dockerBuildPath)
     }
-    file("${dockerBuildDir}/${distTarFileName}").renameTo("${dockerBuildDir}/web3signer")
+    def dockerDist = file("${dockerBuildPath}/${distTarFileName}")
+    dockerDist.renameTo("${dockerBuildPath}/web3signer")
   }
 }
 
-task distDocker(type: Exec) {
+def dockerImage = "consensys/web3signer"
+def dockerJdkVariants = ["jdk17", "jdk11",]
+def dockerBuildDir = "build/docker-web3signer/"
+
+task distDocker  {
   dependsOn dockerDistUntar
-  def dockerBuildVersion = rootProject.version
-  def imageName = "consensys/web3signer"
-  def image = project.hasProperty('release.releaseVersion') ? "${imageName}:" + project.property('release.releaseVersion') : "${imageName}:${project.version}"
-  def dockerBuildDir = "build/docker-web3signer/"
-  workingDir "${dockerBuildDir}"
 
-  doFirst {
-    copy {
-      from file("${projectDir}/docker/Dockerfile")
-      into(workingDir)
+  def dockerBuildVersion = 'develop'
+  doLast {
+    for (def variant in dockerJdkVariants) {
+      copy {
+        from file("${projectDir}/docker/${variant}/Dockerfile")
+        into(dockerBuildDir)
+      }
+      exec {
+        def image = "${dockerImage}:${dockerBuildVersion}-${variant}"
+        workingDir dockerBuildDir
+        executable "sh"
+        args "-c", "docker build --build-arg BUILD_DATE=${buildTime()} --build-arg VERSION=${dockerBuildVersion} --build-arg VCS_REF=${getCheckedOutGitCommitHash()} -t ${image} ."
+      }
+    }
+    // tag the "default" (which is the variant in the zero position)
+    exec {
+      executable "sh"
+      args "-c", "docker tag '${dockerImage}:${dockerBuildVersion}-${dockerJdkVariants[0]}' '${dockerImage}:${dockerBuildVersion}'"
     }
   }
-
-  executable "sh"
-  args "-c", "docker build --build-arg BUILD_DATE=${buildTime()} --build-arg VERSION=${dockerBuildVersion} --build-arg VCS_REF=${getCheckedOutGitCommitHash()} -t ${image} ."
 }
 
-task testDocker(type: Exec) {
-  dependsOn distDocker
+task testDocker {
+  dependsOn([distDocker])
+  def dockerBuildVersion = 'develop'
   def dockerReportsDir = "docker/reports/"
-  def imageName = "consensys/web3signer"
-  def image = project.hasProperty('release.releaseVersion') ? "${imageName}:" + project.property('release.releaseVersion') : "${imageName}:${project.version}"
-  workingDir "docker"
-
   doFirst {
     new File(dockerReportsDir).mkdir()
   }
-
-  executable "sh"
-  args "-c", "bash test.sh ${image}"
+  doLast {
+    exec {
+      workingDir "docker"
+      executable "sh"
+      args "-c", "sh ./test.sh '${dockerImage}:${dockerBuildVersion}'"
+    }
+  }
 }
 
-task dockerUpload(type: Exec) {
-  dependsOn distDocker
-  doFirst {
-    def dockerBuildVersion = rootProject.version
-    def imageName = "consensys/web3signer"
-    def image = "${imageName}:${dockerBuildVersion}"
-    def cmd = "docker push '${image}'"
+task uploadDocker {
+  dependsOn([distDocker])
+  def dockerBuildVersion = "${rootProject.version}".replace('+', '-')
+  def architecture = System.getenv('architecture')
+  def platform = System.getenv('platform')
 
-    def psImageName = "pegasyseng/web3signer"
-    def psImage = "${psImageName}:${dockerBuildVersion}"
-    cmd += " && docker tag '${image}' '${psImage}' && docker push '${psImage}'"
-
-    def additionalTags = []
-
-    if (project.hasProperty('branch') && project.property('branch') == 'master') {
-      additionalTags.add('develop')
-    }
-
-    if (!isDevelopBuild) {
-      additionalTags.add('latest')
-      additionalTags.add(version.split(/\./)[0..1].join('.'))
-    }
-
-    additionalTags.each { tag -> cmd += " && docker tag '${image}' '${imageName}:${tag.trim()}' && docker push '${imageName}:${tag.trim()}'" }
-    additionalTags.each { tag -> cmd += " && docker tag '${image}' '${psImageName}:${tag.trim()}' && docker push '${psImageName}:${tag.trim()}'" }
-    args "-c", "${cmd}"
+  def versionPrefixes = [dockerBuildVersion]
+  if (project.hasProperty('branch') && project.property('branch') == 'master') {
+    versionPrefixes.add('develop')
   }
-  executable "sh"
+
+  if (!isDevelopBuild) {
+    versionPrefixes.add('latest')
+    versionPrefixes.add(dockerBuildVersion.split(/\./)[0..1].join('.'))
+  }
+
+  doLast {
+    for (def variant in dockerJdkVariants) {
+      def tags = ""
+      versionPrefixes.forEach { prefix -> tags += "-t ${dockerImage}:${prefix.trim()}-${variant}-${architecture} "}
+
+      if (variant == dockerJdkVariants[0]) {
+        versionPrefixes.forEach { prefix -> tags += "-t ${dockerImage}:${prefix.trim()}-${architecture} "}
+      }
+
+      copy {
+        from file("${projectDir}/docker/${variant}/Dockerfile")
+        into(dockerBuildDir)
+      }
+
+      exec {
+        workingDir dockerBuildDir
+        executable "sh"
+        args "-c", "docker build --platform ${platform} --build-arg BUILD_DATE=${buildTime()} --build-arg VERSION=${dockerBuildVersion} --build-arg VCS_REF=${getCheckedOutGitCommitHash()} ${tags} ."
+      }
+
+      //docker trust sign runs one image at a time, so we have to remove the '-t' in the string and split into a list we can use
+      def trustTags = tags.replaceAll( '-t ', '' ).trim().split(' ')
+      for (def t in trustTags) {
+        exec {
+          workingDir dockerBuildDir
+          executable "sh"
+          args "-c", "docker trust sign ${t} && docker push ${t} "
+        }
+      }
+    }
+  }
+}
+
+task manifestDocker {
+  def dockerBuildVersion = "${rootProject.version}".replace('+', '-')
+  def versionPrefixes = [dockerBuildVersion]
+  def platforms = ["arm64", "amd64"]
+
+  if (project.hasProperty('branch') && project.property('branch') == 'master') {
+    versionPrefixes.add('develop')
+  }
+
+  if (!isDevelopBuild) {
+    versionPrefixes.add('latest')
+    versionPrefixes.add(dockerBuildVersion.split(/\./)[0..1].join('.'))
+  }
+
+  doLast {
+    for (def variant in dockerJdkVariants) {
+      def tags = []
+      def cmd = ""
+      versionPrefixes.forEach { prefix -> tags.add("${dockerImage}:${prefix.trim()}-${variant}") }
+
+      if (variant == dockerJdkVariants[0]) {
+        versionPrefixes.forEach { prefix -> tags.add("${dockerImage}:${prefix.trim()}") }
+      }
+
+      for (def tag in tags) {
+        platforms.forEach { platform -> cmd += "${tag}-${platform} " }
+        exec {
+          executable "sh"
+          args "-c", "docker manifest create ${tag} ${cmd} && docker manifest push ${tag}"
+        }
+      }
+    }
+  }
 }
 
 task jacocoRootReport(type: org.gradle.testing.jacoco.tasks.JacocoReport) {
@@ -521,7 +611,7 @@ def buildTime() {
 // Otherwise, use develop
 def calculatePublishVersion() {
   if (!grgit) {
-    return 'UNKNOWN'
+    return 'develop'
   }
   def specificVersion = calculateVersion()
   def isReleaseBranch = grgit.branch.current().name.startsWith('release-')
@@ -537,7 +627,8 @@ def calculatePublishVersion() {
 @Memoized
 def calculateVersion() {
   if (!grgit) {
-    return 'UNKNOWN'
+    logger.warn("Not building from a git checkout. Version information will not be available. Building from a git checkout is strongly recommended.")
+    return 'UNKNOWN+develop'
   }
   String version = grgit.describe(tags: true)
   if (version == null) {
@@ -575,10 +666,7 @@ task releaseIntegrationTest(type: Test){
 task releaseAcceptanceTest(type: Test, dependsOn : ':acceptance-tests:acceptanceTest') {}
 
 task cloudsmithUpload {
-  dependsOn([
-    distTar,
-    distZip,
-  ])
+  dependsOn([distTar, distZip,])
   doLast {
     exec {
       executable project.file("scripts/cloudsmith-upload.sh")

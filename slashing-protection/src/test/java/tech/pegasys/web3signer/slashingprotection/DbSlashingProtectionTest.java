@@ -20,6 +20,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.refEq;
 import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
@@ -33,37 +34,33 @@ import tech.pegasys.web3signer.slashingprotection.dao.SignedAttestationsDao;
 import tech.pegasys.web3signer.slashingprotection.dao.SignedBlock;
 import tech.pegasys.web3signer.slashingprotection.dao.SignedBlocksDao;
 import tech.pegasys.web3signer.slashingprotection.dao.SigningWatermark;
-import tech.pegasys.web3signer.slashingprotection.dao.Validator;
 import tech.pegasys.web3signer.slashingprotection.dao.ValidatorsDao;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
+import db.DatabaseSetupExtension;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.units.bigints.UInt64;
 import org.jdbi.v3.core.Jdbi;
 import org.jdbi.v3.core.transaction.TransactionIsolationLevel;
-import org.jdbi.v3.testing.JdbiRule;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
+@ExtendWith(DatabaseSetupExtension.class)
 @SuppressWarnings("ConstantConditions")
 public class DbSlashingProtectionTest {
 
   private static final int VALIDATOR_ID = 1;
   private static final UInt64 SLOT = UInt64.valueOf(2);
   private static final Bytes PUBLIC_KEY1 = Bytes.of(42);
-  private static final Bytes PUBLIC_KEY2 = Bytes.of(43);
-  private static final Bytes PUBLIC_KEY3 = Bytes.of(44);
   private static final Bytes SIGNING_ROOT = Bytes.of(3);
   private static final UInt64 SOURCE_EPOCH = UInt64.valueOf(10);
   private static final UInt64 TARGET_EPOCH = UInt64.valueOf(20);
@@ -74,19 +71,19 @@ public class DbSlashingProtectionTest {
   @Mock private SignedAttestationsDao signedAttestationsDao;
   @Mock private MetadataDao metadataDao;
   @Mock private LowWatermarkDao lowWatermarkDao;
-  @Rule public JdbiRule db = JdbiRule.embeddedPostgres();
 
   private DbSlashingProtection dbSlashingProtection;
-  private Jdbi jdbi;
+  private Jdbi slashingJdbi;
   private Jdbi pruningJdbi;
 
-  @Before
-  public void setup() {
-    jdbi = spy(db.getJdbi());
-    pruningJdbi = spy(db.getJdbi());
+  @BeforeEach
+  public void setup(final Jdbi jdbi) {
+    DbConnection.configureJdbi(jdbi);
+    slashingJdbi = spy(jdbi);
+    pruningJdbi = spy(jdbi);
     dbSlashingProtection =
         new DbSlashingProtection(
-            jdbi,
+            slashingJdbi,
             pruningJdbi,
             validatorsDao,
             signedBlocksDao,
@@ -95,8 +92,10 @@ public class DbSlashingProtectionTest {
             lowWatermarkDao,
             1,
             1,
-            HashBiMap.create(Map.of(PUBLIC_KEY1, VALIDATOR_ID)));
-    when(metadataDao.findGenesisValidatorsRoot(any())).thenReturn(Optional.of(GVR));
+            new RegisteredValidators(
+                slashingJdbi, validatorsDao, HashBiMap.create(Map.of(PUBLIC_KEY1, VALIDATOR_ID))));
+    lenient().when(metadataDao.findGenesisValidatorsRoot(any())).thenReturn(Optional.of(GVR));
+    lenient().when(validatorsDao.isEnabled(any(), eq(VALIDATOR_ID))).thenReturn(true);
   }
 
   @Test
@@ -158,8 +157,7 @@ public class DbSlashingProtectionTest {
   }
 
   @Test
-  public void blockCannotSignWhenNoRegisteredValidator() {
-    final Jdbi jdbi = db.getJdbi();
+  public void blockCannotSignWhenNoRegisteredValidator(final Jdbi jdbi) {
     final DbSlashingProtection dbSlashingProtection =
         new DbSlashingProtection(
             jdbi,
@@ -170,7 +168,8 @@ public class DbSlashingProtectionTest {
             metadataDao,
             lowWatermarkDao,
             0,
-            0);
+            0,
+            new RegisteredValidators(jdbi, validatorsDao));
 
     assertThatThrownBy(
             () -> dbSlashingProtection.maySignBlock(PUBLIC_KEY1, SIGNING_ROOT, SLOT, GVR))
@@ -179,6 +178,13 @@ public class DbSlashingProtectionTest {
 
     verify(signedBlocksDao, never())
         .insertBlockProposal(any(), refEq(new SignedBlock(VALIDATOR_ID, SLOT, SIGNING_ROOT)));
+  }
+
+  @Test
+  public void blockCannotBeSignedIfValidatorDisabled() {
+    when(validatorsDao.isEnabled(any(), eq(VALIDATOR_ID))).thenReturn(false);
+    assertThat(dbSlashingProtection.maySignBlock(PUBLIC_KEY1, SIGNING_ROOT, SLOT, GVR)).isFalse();
+    verify(signedBlocksDao, never()).insertBlockProposal(any(), any());
   }
 
   @Test
@@ -322,8 +328,7 @@ public class DbSlashingProtectionTest {
   }
 
   @Test
-  public void attestationCannotSignWhenNoRegisteredValidator() {
-    final Jdbi jdbi = db.getJdbi();
+  public void attestationCannotSignWhenNoRegisteredValidator(final Jdbi jdbi) {
     final DbSlashingProtection dbSlashingProtection =
         new DbSlashingProtection(
             jdbi,
@@ -334,7 +339,8 @@ public class DbSlashingProtectionTest {
             metadataDao,
             lowWatermarkDao,
             0,
-            0);
+            0,
+            new RegisteredValidators(jdbi, validatorsDao));
 
     assertThatThrownBy(
             () ->
@@ -359,38 +365,6 @@ public class DbSlashingProtectionTest {
         .isFalse();
     verifyNoInteractions(signedAttestationsDao);
     verify(signedAttestationsDao, never()).insertAttestation(any(), refEq(attestation));
-  }
-
-  @Test
-  public void registersValidatorsThatAreNotAlreadyInDb() {
-    final BiMap<Bytes, Integer> registeredValidators = HashBiMap.create();
-    registeredValidators.put(PUBLIC_KEY1, 1);
-    final Jdbi jdbi = db.getJdbi();
-    final DbSlashingProtection dbSlashingProtection =
-        new DbSlashingProtection(
-            jdbi,
-            jdbi,
-            validatorsDao,
-            signedBlocksDao,
-            signedAttestationsDao,
-            metadataDao,
-            lowWatermarkDao,
-            0,
-            0,
-            registeredValidators);
-
-    when(validatorsDao.retrieveValidators(any(), any()))
-        .thenReturn(List.of(new Validator(1, PUBLIC_KEY1)));
-    when(validatorsDao.registerValidators(any(), any()))
-        .thenReturn(List.of(new Validator(2, PUBLIC_KEY2), new Validator(3, PUBLIC_KEY3)));
-    dbSlashingProtection.registerValidators(List.of(PUBLIC_KEY1, PUBLIC_KEY2, PUBLIC_KEY3));
-
-    assertThat(registeredValidators).hasSize(3);
-    assertThat(registeredValidators)
-        .isEqualTo(Map.of(PUBLIC_KEY1, 1, PUBLIC_KEY2, 2, PUBLIC_KEY3, 3));
-    verify(validatorsDao)
-        .retrieveValidators(any(), eq(List.of(PUBLIC_KEY1, PUBLIC_KEY2, PUBLIC_KEY3)));
-    verify(validatorsDao).registerValidators(any(), eq(List.of(PUBLIC_KEY2, PUBLIC_KEY3)));
   }
 
   @Test
@@ -548,6 +522,16 @@ public class DbSlashingProtectionTest {
   }
 
   @Test
+  public void attestationCannotBeSignedIfValidatorDisabled() {
+    when(validatorsDao.isEnabled(any(), eq(VALIDATOR_ID))).thenReturn(false);
+    assertThat(
+            dbSlashingProtection.maySignAttestation(
+                PUBLIC_KEY1, SIGNING_ROOT, SOURCE_EPOCH, TARGET_EPOCH, GVR))
+        .isFalse();
+    verify(signedAttestationsDao, never()).insertAttestation(any(), any());
+  }
+
+  @Test
   public void slashingProtectionEnactedIfAttestationWithInvalidGvr() {
     when(metadataDao.findGenesisValidatorsRoot(any()))
         .thenReturn(Optional.of(Bytes32.leftPad(Bytes.of(1))));
@@ -600,6 +584,6 @@ public class DbSlashingProtectionTest {
     dbSlashingProtection.prune();
     verify(pruningJdbi, atLeast(2))
         .inTransaction(eq(TransactionIsolationLevel.READ_UNCOMMITTED), any());
-    verifyNoInteractions(jdbi);
+    verifyNoInteractions(slashingJdbi);
   }
 }

@@ -17,10 +17,10 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 
-import tech.pegasys.web3signer.core.signing.KeyType;
-import tech.pegasys.web3signer.core.signing.filecoin.FilecoinAddress;
-import tech.pegasys.web3signer.core.signing.filecoin.FilecoinNetwork;
 import tech.pegasys.web3signer.dsl.utils.MetadataFileHelpers;
+import tech.pegasys.web3signer.signing.KeyType;
+import tech.pegasys.web3signer.signing.filecoin.FilecoinAddress;
+import tech.pegasys.web3signer.signing.filecoin.FilecoinNetwork;
 import tech.pegasys.web3signer.tests.signing.SigningAcceptanceTestBase;
 
 import java.io.File;
@@ -32,6 +32,7 @@ import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ValueNode;
 import com.github.arteam.simplejsonrpc.core.domain.Request;
@@ -64,10 +65,10 @@ public class FcSecpSigningAcceptanceTest extends SigningAcceptanceTestBase {
     metadataFileHelpers.createKeyStoreYamlFileAt(
         keyConfigFile, Path.of(keyPath), "pass", KeyType.SECP256K1);
 
-    setupSigner("filecoin");
+    setupFilecoinSigner();
 
     final ValueNode id = JsonNodeFactory.instance.numberNode(1);
-    final ObjectMapper mapper = new ObjectMapper();
+    final ObjectMapper mapper = JsonMapper.builder().build();
     final Map<String, String> metaData = Map.of("type", "unknown");
     final JsonNode params =
         mapper.convertValue(

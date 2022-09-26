@@ -12,16 +12,16 @@
  */
 package tech.pegasys.web3signer.dsl.utils;
 
-import tech.pegasys.web3signer.core.config.AzureAuthenticationMode;
-import tech.pegasys.web3signer.core.config.AzureKeyVaultParameters;
+import tech.pegasys.web3signer.signing.config.AzureAuthenticationMode;
+import tech.pegasys.web3signer.signing.config.AzureKeyVaultParameters;
 
 public class DefaultAzureKeyVaultParameters implements AzureKeyVaultParameters {
 
-  private String keyVaultName;
-  private AzureAuthenticationMode authenticationMode;
-  private String clientId;
-  private String tenantId;
-  private String clientSecret;
+  private final String keyVaultName;
+  private final AzureAuthenticationMode authenticationMode;
+  private final String clientId;
+  private final String tenantId;
+  private final String clientSecret;
 
   public DefaultAzureKeyVaultParameters(
       final String keyVaultName,

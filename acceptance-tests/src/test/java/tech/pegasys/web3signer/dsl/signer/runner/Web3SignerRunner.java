@@ -26,7 +26,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import org.apache.commons.io.FileUtils;
@@ -97,27 +96,27 @@ public abstract class Web3SignerRunner {
 
   private void loadPortsFile() {
     final File portsFile = new File(dataPath.toFile(), PORTS_FILENAME);
-    LOG.info("Awaiting presence of ethsigner.ports file: {}", portsFile.getAbsolutePath());
+    LOG.info("Awaiting presence of {} file: {}", PORTS_FILENAME, portsFile.getAbsolutePath());
     awaitPortsFile(dataPath);
-    LOG.info("Found ethsigner.ports file: {}", portsFile.getAbsolutePath());
+    LOG.info("Found {} file: {}", PORTS_FILENAME, portsFile.getAbsolutePath());
 
     try (final FileInputStream fis = new FileInputStream(portsFile)) {
       portsProperties.load(fis);
-      LOG.info("EthSigner ports: {}", portsProperties);
+      LOG.info("Web3signer ports: {}", portsProperties);
     } catch (final IOException e) {
-      throw new RuntimeException("Error reading Web3Provider ports file", e);
+      throw new RuntimeException("Error reading Web3Signer ports file", e);
     }
   }
 
   private void awaitPortsFile(final Path dataDir) {
-    final int secondsToWait = Boolean.getBoolean("debugSubProcess") ? 3600 : 30;
     final File file = new File(dataDir.toFile(), PORTS_FILENAME);
-    Awaitility.waitAtMost(secondsToWait, TimeUnit.SECONDS)
+
+    Awaitility.waitAtMost(signerConfig.getStartupTimeout())
         .until(
             () -> {
               if (file.exists()) {
                 try (final Stream<String> s = Files.lines(file.toPath())) {
-                  return s.count() > 0;
+                  return s.findAny().isPresent();
                 }
               }
               return false;

@@ -17,18 +17,18 @@ import static io.vertx.core.http.HttpHeaders.CONTENT_TYPE;
 import static tech.pegasys.web3signer.core.service.http.handlers.ContentTypes.JSON_UTF_8;
 import static tech.pegasys.web3signer.core.service.http.handlers.ContentTypes.TEXT_PLAIN_UTF_8;
 import static tech.pegasys.web3signer.core.util.DepositSigningRootUtil.compute_domain;
-import static tech.pegasys.web3signer.core.util.IdentifierUtils.normaliseIdentifier;
+import static tech.pegasys.web3signer.signing.util.IdentifierUtils.normaliseIdentifier;
 
 import tech.pegasys.teku.api.schema.AttestationData;
-import tech.pegasys.teku.api.schema.BeaconBlock;
 import tech.pegasys.teku.api.schema.altair.ContributionAndProof;
 import tech.pegasys.teku.api.schema.altair.SyncCommitteeContribution;
-import tech.pegasys.teku.core.signatures.SigningRootUtil;
 import tech.pegasys.teku.spec.Spec;
 import tech.pegasys.teku.spec.constants.Domain;
 import tech.pegasys.teku.spec.datastructures.operations.versions.altair.SyncAggregatorSelectionDataSchema;
 import tech.pegasys.teku.spec.logic.common.util.SyncCommitteeUtil;
+import tech.pegasys.teku.spec.signatures.SigningRootUtil;
 import tech.pegasys.web3signer.core.metrics.SlashingProtectionMetrics;
+import tech.pegasys.web3signer.core.service.http.ArtifactType;
 import tech.pegasys.web3signer.core.service.http.handlers.signing.SignerForIdentifier;
 import tech.pegasys.web3signer.core.service.http.metrics.HttpApiMetrics;
 import tech.pegasys.web3signer.core.util.DepositSigningRootUtil;
@@ -46,7 +46,8 @@ import io.vertx.core.Handler;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.MIMEHeader;
 import io.vertx.ext.web.RoutingContext;
-import io.vertx.ext.web.api.RequestParameters;
+import io.vertx.ext.web.validation.RequestParameters;
+import io.vertx.ext.web.validation.ValidationHandler;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
@@ -88,8 +89,8 @@ public class Eth2SignForIdentifierHandler implements Handler<RoutingContext> {
   @Override
   public void handle(final RoutingContext routingContext) {
     try (final TimingContext ignored = httpMetrics.getSigningTimer().startTimer()) {
-      LOG.debug("{} || {}", routingContext.normalisedPath(), routingContext.getBody());
-      final RequestParameters params = routingContext.get("parsedParameters");
+      LOG.trace("{} || {}", routingContext.normalizedPath(), routingContext.getBody());
+      final RequestParameters params = routingContext.get(ValidationHandler.REQUEST_CONTEXT_KEY);
       final String identifier = params.pathParameter("identifier").toString();
       final Eth2SigningRequestBody eth2SigningRequestBody;
       try {
@@ -175,24 +176,59 @@ public class Eth2SignForIdentifierHandler implements Handler<RoutingContext> {
     final ForkInfo forkInfo = eth2SigningRequestBody.getForkInfo();
     switch (eth2SigningRequestBody.getType()) {
       case BLOCK:
-        final BeaconBlock beaconBlock = eth2SigningRequestBody.getBlock();
-        final UInt64 blockSlot = UInt64.valueOf(beaconBlock.slot.bigIntegerValue());
-        return slashingProtection
-            .get()
-            .maySignBlock(publicKey, signingRoot, blockSlot, forkInfo.getGenesisValidatorsRoot());
+      case BLOCK_V2:
+        try (final TimingContext ignored =
+            slashingMetrics.getDatabaseTimer().labels("block").startTimer()) {
+          return maySignBlock(
+              publicKey, signingRoot, getBlockSlot(eth2SigningRequestBody), forkInfo);
+        }
       case ATTESTATION:
         final AttestationData attestation = eth2SigningRequestBody.getAttestation();
-        return slashingProtection
-            .get()
-            .maySignAttestation(
-                publicKey,
-                signingRoot,
-                toUInt64(attestation.source.epoch),
-                toUInt64(attestation.target.epoch),
-                forkInfo.getGenesisValidatorsRoot());
+        try (final TimingContext ignored =
+            slashingMetrics.getDatabaseTimer().labels("attestation").startTimer()) {
+          return slashingProtection
+              .get()
+              .maySignAttestation(
+                  publicKey,
+                  signingRoot,
+                  toUInt64(attestation.source.epoch),
+                  toUInt64(attestation.target.epoch),
+                  forkInfo.getGenesisValidatorsRoot());
+        }
       default:
         return true;
     }
+  }
+
+  private UInt64 getBlockSlot(final Eth2SigningRequestBody eth2SigningRequestBody) {
+    final UInt64 blockSlot;
+    if (eth2SigningRequestBody.getType() == ArtifactType.BLOCK) {
+      blockSlot = UInt64.valueOf(eth2SigningRequestBody.getBlock().slot.bigIntegerValue());
+    } else {
+      final BlockRequest blockRequest = eth2SigningRequestBody.getBlockRequest();
+      switch (blockRequest.getVersion()) {
+        case PHASE0:
+        case ALTAIR:
+          blockSlot = UInt64.valueOf(blockRequest.getBeaconBlock().slot.bigIntegerValue());
+          break;
+        case BELLATRIX:
+        default:
+          blockSlot = UInt64.valueOf(blockRequest.getBeaconBlockHeader().slot.bigIntegerValue());
+          break;
+      }
+    }
+
+    return blockSlot;
+  }
+
+  private boolean maySignBlock(
+      final Bytes publicKey,
+      final Bytes signingRoot,
+      final UInt64 blockSlot,
+      final ForkInfo forkInfo) {
+    return slashingProtection
+        .get()
+        .maySignBlock(publicKey, signingRoot, blockSlot, forkInfo.getGenesisValidatorsRoot());
   }
 
   private Bytes computeSigningRoot(final Eth2SigningRequestBody body) {
@@ -202,6 +238,27 @@ public class Eth2SignForIdentifierHandler implements Handler<RoutingContext> {
         return signingRootUtil.signingRootForSignBlock(
             body.getBlock().asInternalBeaconBlock(eth2Spec),
             body.getForkInfo().asInternalForkInfo());
+      case BLOCK_V2:
+        checkArgument(body.getBlockRequest() != null, "beacon_block must be specified");
+        final Bytes blockV2SigningRoot;
+        switch (body.getBlockRequest().getVersion()) {
+          case PHASE0:
+          case ALTAIR:
+            blockV2SigningRoot =
+                signingRootUtil.signingRootForSignBlock(
+                    body.getBlockRequest().getBeaconBlock().asInternalBeaconBlock(eth2Spec),
+                    body.getForkInfo().asInternalForkInfo());
+            break;
+          case BELLATRIX:
+          default:
+            blockV2SigningRoot =
+                signingRootUtil.signingRootForSignBlockHeader(
+                    body.getBlockRequest().getBeaconBlockHeader().asInternalBeaconBlockHeader(),
+                    body.getForkInfo().asInternalForkInfo());
+            break;
+        }
+
+        return blockV2SigningRoot;
       case ATTESTATION:
         checkArgument(body.getAttestation() != null, "attestation must be specified");
         return signingRootUtil.signingRootForSignAttestationData(
@@ -210,7 +267,7 @@ public class Eth2SignForIdentifierHandler implements Handler<RoutingContext> {
       case AGGREGATE_AND_PROOF:
         checkArgument(body.getAggregateAndProof() != null, "aggregateAndProof must be specified");
         return signingRootUtil.signingRootForSignAggregateAndProof(
-            body.getAggregateAndProof().asInternalAggregateAndProof(),
+            body.getAggregateAndProof().asInternalAggregateAndProof(eth2Spec),
             body.getForkInfo().asInternalForkInfo());
       case AGGREGATION_SLOT:
         checkArgument(body.getAggregationSlot() != null, "aggregationSlot must be specified");
@@ -231,15 +288,15 @@ public class Eth2SignForIdentifierHandler implements Handler<RoutingContext> {
             compute_domain(Domain.DEPOSIT, body.getDeposit().getGenesisForkVersion(), Bytes32.ZERO);
         return DepositSigningRootUtil.compute_signing_root(
             body.getDeposit().asInternalDepositMessage(), depositDomain);
-      case SYNC_COMMITTEE_SIGNATURE:
-        final SyncCommitteeSignature syncCommitteSignature = body.getSyncCommitteeSignature();
-        checkArgument(syncCommitteSignature != null, "SyncCommitteeSignature must be specified");
+      case SYNC_COMMITTEE_MESSAGE:
+        final SyncCommitteeMessage syncCommitteeMessage = body.getSyncCommitteeMessage();
+        checkArgument(syncCommitteeMessage != null, "SyncCommitteeMessage must be specified");
         return signingRootFromSyncCommitteeUtils(
-            syncCommitteSignature.getSlot(),
+            syncCommitteeMessage.getSlot(),
             utils ->
-                utils.getSyncCommitteeSignatureSigningRoot(
-                    syncCommitteSignature.getBeaconBlockRoot(),
-                    eth2Spec.computeEpochAtSlot(syncCommitteSignature.getSlot()),
+                utils.getSyncCommitteeMessageSigningRoot(
+                    syncCommitteeMessage.getBeaconBlockRoot(),
+                    eth2Spec.computeEpochAtSlot(syncCommitteeMessage.getSlot()),
                     body.getForkInfo().asInternalForkInfo()));
       case SYNC_COMMITTEE_SELECTION_PROOF:
         final SyncAggregatorSelectionData syncAggregatorSelectionData =
@@ -261,6 +318,11 @@ public class Eth2SignForIdentifierHandler implements Handler<RoutingContext> {
                 utils.getContributionAndProofSigningRoot(
                     asInternalContributionAndProof(contributionAndProof),
                     body.getForkInfo().asInternalForkInfo()));
+      case VALIDATOR_REGISTRATION:
+        final ValidatorRegistration validatorRegistration = body.getValidatorRegistration();
+        checkArgument(validatorRegistration != null, "ValidatorRegistration is required");
+        return signingRootUtil.signingRootForValidatorRegistration(
+            validatorRegistration.asInternalValidatorRegistration());
       default:
         throw new IllegalStateException("Signing root unimplemented for type " + body.getType());
     }

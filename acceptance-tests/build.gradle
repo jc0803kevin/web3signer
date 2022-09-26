@@ -14,16 +14,20 @@
 plugins {
   id "de.undercouch.download" version "4.1.0"
   id "com.google.osdetector" version "1.6.2"
-  id "io.gatling.gradle" version "3.6.0"
+  id "io.gatling.gradle" version "3.7.0-M1"
 }
 
 dependencies {
 
   testImplementation project(":app")
   testImplementation project(":core")
+  testImplementation project(":signing")
+  testImplementation project(":commandline")
 
   testImplementation 'org.apache.tuweni:tuweni-bytes'
   testImplementation 'org.apache.tuweni:tuweni-units'
+
+  testImplementation 'commons-io:commons-io:2.6'
 
   testRuntimeOnly 'javax.activation:activation'
   testRuntimeOnly 'org.apache.logging.log4j:log4j-core'
@@ -43,8 +47,10 @@ dependencies {
   testImplementation 'tech.pegasys.signers.internal:bls-keystore'
   testImplementation 'tech.pegasys.signers.internal:signing-secp256k1-impl'
   testImplementation 'tech.pegasys.teku.internal:bls'
-  testImplementation 'tech.pegasys.teku.internal:core'
   testImplementation 'tech.pegasys.teku.internal:spec'
+  testImplementation 'tech.pegasys.teku.internal:networks'
+  testImplementation 'tech.pegasys.teku.internal:json'
+  testImplementation 'tech.pegasys.teku.internal:jackson'
   testImplementation (group: 'tech.pegasys.teku.internal', name: 'spec', classifier: 'test-fixtures')
   testImplementation (group: 'tech.pegasys.teku.internal', name: 'bls', classifier: 'test-fixtures')
   testImplementation 'tech.pegasys.teku.internal:serializer'
@@ -56,16 +62,20 @@ dependencies {
   testImplementation 'com.github.arteam:simple-json-rpc-server'
   testImplementation 'com.github.arteam:simple-json-rpc-client'
   testImplementation 'org.flywaydb:flyway-core'
-  testImplementation 'com.opentable.components:otj-pg-embedded'
   testImplementation 'io.rest-assured:rest-assured'
   testImplementation 'org.jdbi:jdbi3-core'
   testImplementation (group: 'tech.pegasys.signers.internal', name: 'keystorage-hashicorp', classifier: 'test-fixtures')
   testImplementation (group: 'tech.pegasys.signers.internal', name: 'acceptance-tests', classifier: 'test-fixtures')
   testImplementation (group: 'tech.pegasys.signers.internal', name: 'signing-secp256k1-impl', classifier: 'test-fixtures')
   testImplementation (testFixtures(project(":slashing-protection")))
-  testImplementation (testFixtures(project(":core")))
+  testImplementation (testFixtures(project(":signing")))
+  testImplementation enforcedPlatform('io.zonky.test.postgres:embedded-postgres-binaries-bom')
+  testImplementation 'io.zonky.test:embedded-postgres'
 
   gatlingImplementation configurations.getByName("testImplementation")
+
+  implementation 'software.amazon.awssdk:auth'
+  implementation 'software.amazon.awssdk:secretsmanager'
 }
 
 test.enabled = false
@@ -117,8 +127,12 @@ task acceptanceTest(dependsOn: [
   description = 'Runs Web3Signer acceptance tests.'
   group = 'verification'
 
+  //systemProperty 'debugSubProcess', 'true'
   systemProperty 'acctests.runWeb3SignerAsProcess', 'true'
   systemProperty 'vaultBinary', vaultBinary()
+  // embedded pg initdb needs following
+  environment "LC_CTYPE", "en_US.UTF-8"
+  environment "LC_ALL", "en_US.UTF-8"
 
   useJUnitPlatform()
   // toggle to show standard out and standard error of the test JVM(s) on the console

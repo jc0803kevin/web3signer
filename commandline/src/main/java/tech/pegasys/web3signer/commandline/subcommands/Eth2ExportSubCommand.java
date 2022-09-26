@@ -12,10 +12,9 @@
  */
 package tech.pegasys.web3signer.commandline.subcommands;
 
-import static tech.pegasys.web3signer.slashingprotection.SlashingProtectionFactory.createSlashingProtection;
-
 import tech.pegasys.web3signer.core.InitializationException;
-import tech.pegasys.web3signer.slashingprotection.SlashingProtection;
+import tech.pegasys.web3signer.slashingprotection.SlashingProtectionContext;
+import tech.pegasys.web3signer.slashingprotection.SlashingProtectionContextFactory;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -23,7 +22,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.HelpCommand;
@@ -62,10 +61,10 @@ public class Eth2ExportSubCommand implements Runnable {
     }
 
     try (final OutputStream outStream = new FileOutputStream(output)) {
-      final SlashingProtection slashingProtection =
-          createSlashingProtection(eth2Config.getSlashingProtectionParameters());
+      final SlashingProtectionContext slashingProtectionContext =
+          SlashingProtectionContextFactory.create(eth2Config.getSlashingProtectionParameters());
 
-      slashingProtection.export(outStream);
+      slashingProtectionContext.getSlashingProtection().exportData(outStream);
     } catch (final IOException e) {
       throw new UncheckedIOException("Unable to find output target file", e);
     } catch (final IllegalStateException e) {

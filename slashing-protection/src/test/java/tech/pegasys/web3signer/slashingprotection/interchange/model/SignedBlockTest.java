@@ -14,19 +14,20 @@ package tech.pegasys.web3signer.slashingprotection.interchange.model;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import tech.pegasys.web3signer.slashingprotection.interchange.InterchangeModule;
+import tech.pegasys.web3signer.slashingprotection.interchange.InterchangeJsonProvider;
 
 import java.util.Map;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.units.bigints.UInt64;
 import org.junit.jupiter.api.Test;
 
 class SignedBlockTest {
 
-  private final ObjectMapper mapper = new ObjectMapper().registerModule(new InterchangeModule());
+  private final ObjectMapper mapper = new InterchangeJsonProvider().getJsonMapper();
 
   @Test
   @SuppressWarnings("unchecked")
@@ -35,7 +36,8 @@ class SignedBlockTest {
 
     final String jsonOutput = mapper.writeValueAsString(block);
 
-    final Map<String, String> jsonContent = new ObjectMapper().readValue(jsonOutput, Map.class);
+    final Map<String, String> jsonContent =
+        JsonMapper.builder().build().readValue(jsonOutput, Map.class);
 
     assertThat(jsonContent.get("slot")).isEqualTo(block.getSlot().toString());
     assertThat(jsonContent.get("signing_root")).isEqualTo(block.getSigningRoot().toHexString());
@@ -48,7 +50,8 @@ class SignedBlockTest {
 
     final String jsonOutput = mapper.writeValueAsString(block);
 
-    final Map<String, String> jsonContent = new ObjectMapper().readValue(jsonOutput, Map.class);
+    final Map<String, String> jsonContent =
+        JsonMapper.builder().build().readValue(jsonOutput, Map.class);
 
     assertThat(jsonContent.keySet()).doesNotContain("signing_root");
   }

@@ -62,8 +62,17 @@
     },
     {
       "moduleLicense": "IAIK of Graz University of Technology License",
-      "moduleVersion": "1.4.7",
       "moduleName": "org.xipki.iaik:sunpkcs11-wrapper"
+    },
+    {
+      "moduleLicense": "Unicode/ICU License",
+      "moduleName": "com.ibm.icu:icu4j"
+    },
+    {
+      "moduleName": "io.netty:netty-tcnative-classes"
+    },
+    {
+      "moduleName": "org.antlr:ST4"
     }
   ],
   "overrideLicenses": [
@@ -82,6 +91,10 @@
     {
       "moduleName": "jakarta.xml.bind:jakarta.xml.bind-api",
       "moduleLicense": "Eclipse Distribution License - v 1.0"
+    },
+    {
+      "moduleName": "jakarta.validation:jakarta.validation-api",
+      "moduleLicense": "Apache License, Version 2.0"
     },
     {
       "moduleName": "javax.xml.bind:jaxb-api",
@@ -106,6 +119,26 @@
     {
       "moduleName": "org.ow2.asm",
       "moduleLicense": "Apache License, Version 2.0"
+    },
+    {
+      "moduleName": "io.netty:netty-tcnative-classes",
+      "moduleLicense": "Apache License, Version 2.0"
+    },
+    {
+      "moduleName": "org.antlr:ST4",
+      "moduleLicense": "The BSD License"
+    },
+    {
+      "moduleName": "com.google.protobuf:protobuf-java",
+      "moduleLicense": "The BSD License"
+    },
+    {
+      "moduleName": "com.google.protobuf:protobuf-java-util",
+      "moduleLicense": "The BSD License"
+    },
+    {
+      "moduleName": "org.java-websocket:Java-WebSocket",
+      "moduleLicense": "MIT License"
     }
   ]
 }

@@ -20,12 +20,12 @@ import static org.hamcrest.Matchers.equalTo;
 import tech.pegasys.teku.bls.BLSKeyPair;
 import tech.pegasys.teku.bls.BLSPublicKey;
 import tech.pegasys.teku.bls.BLSSecretKey;
-import tech.pegasys.web3signer.core.signing.BlsArtifactSignature;
-import tech.pegasys.web3signer.core.signing.FcBlsArtifactSigner;
-import tech.pegasys.web3signer.core.signing.KeyType;
-import tech.pegasys.web3signer.core.signing.filecoin.FilecoinAddress;
-import tech.pegasys.web3signer.core.signing.filecoin.FilecoinNetwork;
 import tech.pegasys.web3signer.dsl.utils.MetadataFileHelpers;
+import tech.pegasys.web3signer.signing.BlsArtifactSignature;
+import tech.pegasys.web3signer.signing.FcBlsArtifactSigner;
+import tech.pegasys.web3signer.signing.KeyType;
+import tech.pegasys.web3signer.signing.filecoin.FilecoinAddress;
+import tech.pegasys.web3signer.signing.filecoin.FilecoinNetwork;
 import tech.pegasys.web3signer.tests.signing.SigningAcceptanceTestBase;
 
 import java.nio.file.Path;
@@ -34,6 +34,7 @@ import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ValueNode;
 import com.github.arteam.simplejsonrpc.core.domain.Request;
@@ -68,10 +69,10 @@ public class FcBlsSigningAcceptanceTest extends SigningAcceptanceTestBase {
     final String configFilename = publicKey.toString().substring(2);
     final Path keyConfigFile = testDirectory.resolve(configFilename + ".yaml");
     metadataFileHelpers.createUnencryptedYamlFileAt(keyConfigFile, PRIVATE_KEY, KeyType.BLS);
-    setupSigner("filecoin");
+    setupFilecoinSigner();
 
     final ValueNode id = JsonNodeFactory.instance.numberNode(1);
-    final ObjectMapper mapper = new ObjectMapper();
+    final ObjectMapper mapper = JsonMapper.builder().build();
     final Map<String, String> metaData = Map.of("type", "message", "extra", DATA.toBase64String());
     final JsonNode params =
         mapper.convertValue(

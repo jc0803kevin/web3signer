@@ -12,22 +12,39 @@
  */
 package tech.pegasys.web3signer.commandline.subcommands;
 
-import static tech.pegasys.web3signer.core.config.AzureAuthenticationMode.CLIENT_SECRET;
-import static tech.pegasys.web3signer.core.config.AzureAuthenticationMode.USER_ASSIGNED_MANAGED_IDENTITY;
+import static tech.pegasys.web3signer.commandline.PicoCliAwsSecretsManagerParameters.AWS_SECRETS_ACCESS_KEY_ID_OPTION;
+import static tech.pegasys.web3signer.commandline.PicoCliAwsSecretsManagerParameters.AWS_SECRETS_AUTH_MODE_OPTION;
+import static tech.pegasys.web3signer.commandline.PicoCliAwsSecretsManagerParameters.AWS_SECRETS_REGION_OPTION;
+import static tech.pegasys.web3signer.commandline.PicoCliAwsSecretsManagerParameters.AWS_SECRETS_SECRET_ACCESS_KEY_OPTION;
+import static tech.pegasys.web3signer.signing.config.AzureAuthenticationMode.CLIENT_SECRET;
+import static tech.pegasys.web3signer.signing.config.AzureAuthenticationMode.USER_ASSIGNED_MANAGED_IDENTITY;
 
+import tech.pegasys.teku.infrastructure.collections.TekuPair;
 import tech.pegasys.teku.infrastructure.unsigned.UInt64;
-import tech.pegasys.teku.spec.SpecFactory;
+import tech.pegasys.teku.networks.Eth2NetworkConfiguration;
+import tech.pegasys.teku.spec.ForkSchedule;
+import tech.pegasys.teku.spec.SpecMilestone;
 import tech.pegasys.teku.spec.networks.Eth2Network;
+import tech.pegasys.web3signer.commandline.PicoCliAwsSecretsManagerParameters;
 import tech.pegasys.web3signer.commandline.PicoCliAzureKeyVaultParameters;
 import tech.pegasys.web3signer.commandline.PicoCliSlashingProtectionParameters;
+import tech.pegasys.web3signer.commandline.config.PicoKeystoresParameters;
 import tech.pegasys.web3signer.core.Eth2Runner;
 import tech.pegasys.web3signer.core.Runner;
+import tech.pegasys.web3signer.signing.config.AwsAuthenticationMode;
+import tech.pegasys.web3signer.signing.config.KeystoresParameters;
 import tech.pegasys.web3signer.slashingprotection.SlashingProtectionParameters;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
+import java.util.stream.Collectors;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.HelpCommand;
@@ -42,19 +59,30 @@ import picocli.CommandLine.Spec;
     subcommands = {HelpCommand.class, Eth2ExportSubCommand.class, Eth2ImportSubCommand.class},
     mixinStandardHelpOptions = true)
 public class Eth2SubCommand extends ModeSubCommand {
-
+  private static final Logger LOG = LogManager.getLogger();
   public static final String COMMAND_NAME = "eth2";
+
+  private static class NetworkCliCompletionCandidates extends ArrayList<String> {
+    NetworkCliCompletionCandidates() {
+      super(
+          Arrays.stream(Eth2Network.values())
+              .map(Eth2Network::configName)
+              .collect(Collectors.toList()));
+    }
+  }
 
   @Spec CommandSpec commandSpec;
 
   @CommandLine.Option(
       names = {"--network"},
       paramLabel = "<NETWORK>",
+      defaultValue = "mainnet",
+      completionCandidates = NetworkCliCompletionCandidates.class,
       description =
-          "Predefined network configuration to use. Possible values: [mainnet, pyrmont, prater, minimal], file path"
-              + " or URL to a YAML configuration file. Defaults to mainnet.",
+          "Predefined network configuration to use. Possible values: [${COMPLETION-CANDIDATES}], file path"
+              + " or URL to a YAML configuration file. Defaults to ${DEFAULT-VALUE}.",
       arity = "1")
-  private String network = "mainnet";
+  private String network;
 
   @CommandLine.Option(
       names = {"--Xnetwork-altair-fork-epoch"},
@@ -65,24 +93,91 @@ public class Eth2SubCommand extends ModeSubCommand {
       converter = UInt64Converter.class)
   private UInt64 altairForkEpoch;
 
+  @CommandLine.Option(
+      names = {"--Xnetwork-bellatrix-fork-epoch"},
+      hidden = true,
+      paramLabel = "<epoch>",
+      description = "Override the Bellatrix fork activation epoch.",
+      arity = "1",
+      converter = UInt64Converter.class)
+  private UInt64 bellatrixForkEpoch;
+
+  @CommandLine.Option(
+      names = {"--key-manager-api-enabled", "--enable-key-manager-api"},
+      paramLabel = "<BOOL>",
+      description = "Enable the key manager API to manage key stores (default: ${DEFAULT-VALUE}).",
+      arity = "1")
+  private boolean isKeyManagerApiEnabled = false;
+
   @Mixin private PicoCliSlashingProtectionParameters slashingProtectionParameters;
   @Mixin private PicoCliAzureKeyVaultParameters azureKeyVaultParameters;
+  @Mixin private PicoKeystoresParameters keystoreParameters;
+  @Mixin private PicoCliAwsSecretsManagerParameters awsSecretsManagerParameters;
   private tech.pegasys.teku.spec.Spec eth2Spec;
+
+  public Eth2SubCommand() {
+    network = "mainnet";
+  }
 
   @Override
   public Runner createRunner() {
-    return new Eth2Runner(config, slashingProtectionParameters, azureKeyVaultParameters, eth2Spec);
+    logNetworkSpecInformation();
+
+    return new Eth2Runner(
+        config,
+        slashingProtectionParameters,
+        azureKeyVaultParameters,
+        keystoreParameters,
+        awsSecretsManagerParameters,
+        eth2Spec,
+        isKeyManagerApiEnabled);
+  }
+
+  private void logNetworkSpecInformation() {
+    final ForkSchedule forkSchedule = eth2Spec.getForkSchedule();
+    final Map<SpecMilestone, UInt64> milestoneSlotMap =
+        forkSchedule
+            .streamMilestoneBoundarySlots()
+            .collect(Collectors.toMap(TekuPair::getLeft, TekuPair::getRight));
+
+    final StringBuilder logString = new StringBuilder(String.format("Network: %s%n", network));
+    forkSchedule
+        .getActiveMilestones()
+        .forEach(
+            m -> {
+              final String specName = m.getSpecMilestone().name();
+              final UInt64 forkEpoch = m.getFork().getEpoch();
+              final UInt64 boundarySlot = milestoneSlotMap.get(m.getSpecMilestone());
+              logString.append(
+                  String.format(
+                      "Spec Name: %s, Fork Epoch: %s, First Slot: %s%n",
+                      specName, forkEpoch, boundarySlot));
+            });
+    LOG.info(logString);
+  }
+
+  private Eth2NetworkConfiguration createEth2NetworkConfig() {
+    Eth2NetworkConfiguration.Builder builder = Eth2NetworkConfiguration.builder();
+    builder.applyNetworkDefaults(network);
+    if (altairForkEpoch != null) {
+      builder.altairForkEpoch(altairForkEpoch);
+    }
+    if (bellatrixForkEpoch != null) {
+      builder.bellatrixForkEpoch(bellatrixForkEpoch);
+    }
+    return builder.build();
   }
 
   @Override
   protected void validateArgs() {
-    final String networkConfigName =
-        Eth2Network.fromStringLenient(network).map(Eth2Network::configName).orElse(network);
     try {
-      eth2Spec = SpecFactory.create(networkConfigName, Optional.ofNullable(altairForkEpoch));
+      Eth2NetworkConfiguration eth2NetworkConfig = createEth2NetworkConfig();
+      eth2Spec = eth2NetworkConfig.getSpec();
     } catch (final IllegalArgumentException e) {
       throw new ParameterException(
-          commandSpec.commandLine(), "Failed to load network spec: " + networkConfigName, e);
+          commandSpec.commandLine(),
+          "Failed to load network " + network + " due to " + e.getMessage(),
+          e);
     }
 
     if (slashingProtectionParameters.isEnabled()
@@ -97,36 +192,14 @@ public class Eth2SubCommand extends ModeSubCommand {
     validatePositiveValue(
         slashingProtectionParameters.getPruningSlotsPerEpoch(), "Pruning slots per epoch");
 
+    validateAzureParameters();
+    validateKeystoreParameters(keystoreParameters);
+    validateAwsSecretsManageParameters();
+  }
+
+  private void validateAzureParameters() {
     if (azureKeyVaultParameters.isAzureKeyVaultEnabled()) {
-
-      final List<String> missingAzureFields = Lists.newArrayList();
-
-      if (azureKeyVaultParameters.getKeyVaultName() == null) {
-        missingAzureFields.add("--azure-vault-name");
-      }
-
-      if (azureKeyVaultParameters.getAuthenticationMode() == CLIENT_SECRET) {
-        // client secret authentication mode requires all of following options
-        if (azureKeyVaultParameters.getClientSecret() == null) {
-          missingAzureFields.add("--azure-client-secret");
-        }
-
-        if (azureKeyVaultParameters.getClientId() == null) {
-          missingAzureFields.add("--azure-client-id");
-        }
-
-        if (azureKeyVaultParameters.getTenantId() == null) {
-          missingAzureFields.add("--azure-tenant-id");
-        }
-      } else if (azureKeyVaultParameters.getAuthenticationMode()
-          == USER_ASSIGNED_MANAGED_IDENTITY) {
-        if (azureKeyVaultParameters.getClientId() == null) {
-          missingAzureFields.add("--azure-client-id");
-        }
-      }
-
-      // no extra validation required for "system-assigned managed identity".
-
+      final List<String> missingAzureFields = missingAzureFields();
       if (!missingAzureFields.isEmpty()) {
         final String errorMsg =
             String.format(
@@ -135,6 +208,76 @@ public class Eth2SubCommand extends ModeSubCommand {
         throw new ParameterException(commandSpec.commandLine(), errorMsg);
       }
     }
+  }
+
+  private List<String> missingAzureFields() {
+    final List<String> missingFields = Lists.newArrayList();
+    if (azureKeyVaultParameters.getKeyVaultName() == null) {
+      missingFields.add("--azure-vault-name");
+    }
+    if (azureKeyVaultParameters.getAuthenticationMode() == CLIENT_SECRET) {
+      // client secret authentication mode requires all of following options
+      if (azureKeyVaultParameters.getClientSecret() == null) {
+        missingFields.add("--azure-client-secret");
+      }
+
+      if (azureKeyVaultParameters.getKeyVaultName() == null) {
+        missingFields.add("--azure-vault-name");
+      }
+
+      if (azureKeyVaultParameters.getTenantId() == null) {
+        missingFields.add("--azure-tenant-id");
+      }
+    } else if (azureKeyVaultParameters.getAuthenticationMode() == USER_ASSIGNED_MANAGED_IDENTITY) {
+      if (azureKeyVaultParameters.getClientId() == null) {
+        missingFields.add("--azure-client-id");
+      }
+    }
+    return missingFields;
+  }
+
+  private void validateKeystoreParameters(final KeystoresParameters keystoresParameters) {
+    if (keystoresParameters.hasKeystoresPasswordsPath()
+        && keystoresParameters.hasKeystoresPasswordFile()) {
+      throw new ParameterException(
+          commandSpec.commandLine(),
+          "Only one of --keystores-passwords-path or --keystores-password-file options can be specified");
+    }
+  }
+
+  private void validateAwsSecretsManageParameters() {
+    if (awsSecretsManagerParameters.isEnabled()) {
+      final List<String> specifiedAuthModeMissingFields =
+          missingAwsSecretsManagerParametersForSpecified();
+      if (!specifiedAuthModeMissingFields.isEmpty()) {
+        final String errorMsg =
+            String.format(
+                "%s=%s, but the following parameters were missing [%s].",
+                AWS_SECRETS_AUTH_MODE_OPTION,
+                AwsAuthenticationMode.SPECIFIED,
+                String.join(", ", specifiedAuthModeMissingFields));
+        throw new ParameterException(commandSpec.commandLine(), errorMsg);
+      }
+    }
+  }
+
+  private List<String> missingAwsSecretsManagerParametersForSpecified() {
+    final List<String> missingFields = Lists.newArrayList();
+    if (awsSecretsManagerParameters.getAuthenticationMode() == AwsAuthenticationMode.SPECIFIED) {
+      if (awsSecretsManagerParameters.getAccessKeyId() == null) {
+        missingFields.add(AWS_SECRETS_ACCESS_KEY_ID_OPTION);
+      }
+
+      if (awsSecretsManagerParameters.getSecretAccessKey() == null) {
+        missingFields.add(AWS_SECRETS_SECRET_ACCESS_KEY_OPTION);
+      }
+
+      if (awsSecretsManagerParameters.getRegion() == null) {
+        missingFields.add(AWS_SECRETS_REGION_OPTION);
+      }
+    }
+
+    return missingFields;
   }
 
   private void validatePositiveValue(final long value, final String fieldName) {
@@ -152,6 +295,11 @@ public class Eth2SubCommand extends ModeSubCommand {
 
   public SlashingProtectionParameters getSlashingProtectionParameters() {
     return slashingProtectionParameters;
+  }
+
+  @VisibleForTesting
+  public PicoCliAwsSecretsManagerParameters getAwsSecretsManagerParameters() {
+    return awsSecretsManagerParameters;
   }
 
   static class UInt64Converter implements CommandLine.ITypeConverter<UInt64> {

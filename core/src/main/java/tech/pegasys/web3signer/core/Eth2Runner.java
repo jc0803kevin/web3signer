@@ -14,53 +14,71 @@ package tech.pegasys.web3signer.core;
 
 import static tech.pegasys.web3signer.core.service.http.OpenApiOperationsId.ETH2_LIST;
 import static tech.pegasys.web3signer.core.service.http.OpenApiOperationsId.ETH2_SIGN;
+import static tech.pegasys.web3signer.core.service.http.OpenApiOperationsId.KEYMANAGER_DELETE;
+import static tech.pegasys.web3signer.core.service.http.OpenApiOperationsId.KEYMANAGER_IMPORT;
+import static tech.pegasys.web3signer.core.service.http.OpenApiOperationsId.KEYMANAGER_LIST;
 import static tech.pegasys.web3signer.core.service.http.OpenApiOperationsId.RELOAD;
-import static tech.pegasys.web3signer.core.signing.KeyType.BLS;
+import static tech.pegasys.web3signer.signing.KeyType.BLS;
 
+import tech.pegasys.signers.aws.AwsSecretsManagerProvider;
 import tech.pegasys.signers.azure.AzureKeyVault;
 import tech.pegasys.signers.hashicorp.HashicorpConnectionFactory;
 import tech.pegasys.teku.bls.BLSKeyPair;
 import tech.pegasys.teku.bls.BLSSecretKey;
 import tech.pegasys.teku.spec.Spec;
-import tech.pegasys.web3signer.core.config.AzureKeyVaultFactory;
-import tech.pegasys.web3signer.core.config.AzureKeyVaultParameters;
 import tech.pegasys.web3signer.core.config.Config;
 import tech.pegasys.web3signer.core.metrics.SlashingProtectionMetrics;
-import tech.pegasys.web3signer.core.multikey.DefaultArtifactSignerProvider;
-import tech.pegasys.web3signer.core.multikey.SignerLoader;
-import tech.pegasys.web3signer.core.multikey.metadata.AbstractArtifactSignerFactory;
-import tech.pegasys.web3signer.core.multikey.metadata.BlsArtifactSignerFactory;
-import tech.pegasys.web3signer.core.multikey.metadata.interlock.InterlockKeyProvider;
-import tech.pegasys.web3signer.core.multikey.metadata.parser.YamlSignerParser;
-import tech.pegasys.web3signer.core.multikey.metadata.yubihsm.YubiHsmOpaqueDataProvider;
-import tech.pegasys.web3signer.core.service.http.SigningJsonModule;
+import tech.pegasys.web3signer.core.service.http.SigningObjectMapperFactory;
 import tech.pegasys.web3signer.core.service.http.handlers.LogErrorHandler;
+import tech.pegasys.web3signer.core.service.http.handlers.keymanager.delete.DeleteKeystoresHandler;
+import tech.pegasys.web3signer.core.service.http.handlers.keymanager.imports.ImportKeystoresHandler;
+import tech.pegasys.web3signer.core.service.http.handlers.keymanager.list.ListKeystoresHandler;
 import tech.pegasys.web3signer.core.service.http.handlers.signing.SignerForIdentifier;
 import tech.pegasys.web3signer.core.service.http.handlers.signing.eth2.Eth2SignForIdentifierHandler;
 import tech.pegasys.web3signer.core.service.http.metrics.HttpApiMetrics;
-import tech.pegasys.web3signer.core.signing.ArtifactSigner;
-import tech.pegasys.web3signer.core.signing.ArtifactSignerProvider;
-import tech.pegasys.web3signer.core.signing.BlsArtifactSignature;
-import tech.pegasys.web3signer.core.signing.BlsArtifactSigner;
+import tech.pegasys.web3signer.signing.AWSBulkLoadingArtifactSignerProvider;
+import tech.pegasys.web3signer.signing.ArtifactSigner;
+import tech.pegasys.web3signer.signing.ArtifactSignerProvider;
+import tech.pegasys.web3signer.signing.BlsArtifactSignature;
+import tech.pegasys.web3signer.signing.BlsArtifactSigner;
+import tech.pegasys.web3signer.signing.BlsKeystoreBulkLoader;
+import tech.pegasys.web3signer.signing.FileValidatorManager;
+import tech.pegasys.web3signer.signing.KeystoreFileManager;
+import tech.pegasys.web3signer.signing.ValidatorManager;
+import tech.pegasys.web3signer.signing.config.AwsSecretsManagerParameters;
+import tech.pegasys.web3signer.signing.config.AzureKeyVaultFactory;
+import tech.pegasys.web3signer.signing.config.AzureKeyVaultParameters;
+import tech.pegasys.web3signer.signing.config.DefaultArtifactSignerProvider;
+import tech.pegasys.web3signer.signing.config.KeystoresParameters;
+import tech.pegasys.web3signer.signing.config.SignerLoader;
+import tech.pegasys.web3signer.signing.config.metadata.AbstractArtifactSignerFactory;
+import tech.pegasys.web3signer.signing.config.metadata.BlsArtifactSignerFactory;
+import tech.pegasys.web3signer.signing.config.metadata.SignerOrigin;
+import tech.pegasys.web3signer.signing.config.metadata.interlock.InterlockKeyProvider;
+import tech.pegasys.web3signer.signing.config.metadata.parser.YamlSignerParser;
+import tech.pegasys.web3signer.signing.config.metadata.yubihsm.YubiHsmOpaqueDataProvider;
+import tech.pegasys.web3signer.slashingprotection.DbHealthCheck;
 import tech.pegasys.web3signer.slashingprotection.DbPrunerRunner;
-import tech.pegasys.web3signer.slashingprotection.SlashingProtection;
-import tech.pegasys.web3signer.slashingprotection.SlashingProtectionFactory;
+import tech.pegasys.web3signer.slashingprotection.DbValidatorManager;
+import tech.pegasys.web3signer.slashingprotection.SlashingProtectionContext;
+import tech.pegasys.web3signer.slashingprotection.SlashingProtectionContextFactory;
 import tech.pegasys.web3signer.slashingprotection.SlashingProtectionParameters;
+import tech.pegasys.web3signer.slashingprotection.dao.ValidatorsDao;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
 import io.vertx.core.Vertx;
+import io.vertx.ext.healthchecks.Status;
 import io.vertx.ext.web.Router;
-import io.vertx.ext.web.api.contract.openapi3.OpenAPI3RouterFactory;
 import io.vertx.ext.web.impl.BlockingHandlerDecorator;
+import io.vertx.ext.web.openapi.RouterBuilder;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
@@ -70,31 +88,39 @@ import org.hyperledger.besu.plugin.services.MetricsSystem;
 public class Eth2Runner extends Runner {
   private static final Logger LOG = LogManager.getLogger();
 
-  private final Optional<SlashingProtection> slashingProtection;
+  private final Optional<SlashingProtectionContext> slashingProtectionContext;
   private final AzureKeyVaultParameters azureKeyVaultParameters;
+  private final AwsSecretsManagerParameters awsSecretsManagerParameters;
   private final SlashingProtectionParameters slashingProtectionParameters;
   private final boolean pruningEnabled;
+  private final KeystoresParameters keystoresParameters;
   private final Spec eth2Spec;
+  private final boolean isKeyManagerApiEnabled;
 
   public Eth2Runner(
       final Config config,
       final SlashingProtectionParameters slashingProtectionParameters,
       final AzureKeyVaultParameters azureKeyVaultParameters,
-      final Spec eth2Spec) {
+      final KeystoresParameters keystoresParameters,
+      final AwsSecretsManagerParameters awsSecretsManagerParameters,
+      final Spec eth2Spec,
+      final boolean isKeyManagerApiEnabled) {
     super(config);
-    this.slashingProtection = createSlashingProtection(slashingProtectionParameters);
+    this.slashingProtectionContext = createSlashingProtection(slashingProtectionParameters);
     this.azureKeyVaultParameters = azureKeyVaultParameters;
     this.slashingProtectionParameters = slashingProtectionParameters;
     this.pruningEnabled = slashingProtectionParameters.isPruningEnabled();
+    this.keystoresParameters = keystoresParameters;
     this.eth2Spec = eth2Spec;
+    this.isKeyManagerApiEnabled = isKeyManagerApiEnabled;
+    this.awsSecretsManagerParameters = awsSecretsManagerParameters;
   }
 
-  private Optional<SlashingProtection> createSlashingProtection(
+  private Optional<SlashingProtectionContext> createSlashingProtection(
       final SlashingProtectionParameters slashingProtectionParameters) {
     if (slashingProtectionParameters.isEnabled()) {
       try {
-        return Optional.of(
-            SlashingProtectionFactory.createSlashingProtection(slashingProtectionParameters));
+        return Optional.of(SlashingProtectionContextFactory.create(slashingProtectionParameters));
       } catch (final IllegalStateException e) {
         throw new InitializationException(e.getMessage(), e);
       }
@@ -105,51 +131,119 @@ public class Eth2Runner extends Runner {
 
   @Override
   protected String getOpenApiSpecResource() {
-    return "openapi/web3signer-eth2.yaml";
+    return "eth2/web3signer.yaml";
   }
 
   @Override
   public Router populateRouter(final Context context) {
     registerEth2Routes(
-        context.getRouterFactory(),
+        context.getRouterBuilder(),
         context.getArtifactSignerProvider(),
         context.getErrorHandler(),
         context.getMetricsSystem(),
-        slashingProtection);
-
-    return context.getRouterFactory().getRouter();
+        slashingProtectionContext);
+    return context.getRouterBuilder().createRouter();
   }
 
   private void registerEth2Routes(
-      final OpenAPI3RouterFactory routerFactory,
+      final RouterBuilder routerBuilder,
       final ArtifactSignerProvider blsSignerProvider,
       final LogErrorHandler errorHandler,
       final MetricsSystem metricsSystem,
-      final Optional<SlashingProtection> slashingProtection) {
-    final ObjectMapper objectMapper =
-        new ObjectMapper()
-            .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)
-            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-            .registerModule(new SigningJsonModule());
+      final Optional<SlashingProtectionContext> slashingProtectionContext) {
+    final ObjectMapper objectMapper = SigningObjectMapperFactory.createObjectMapper();
 
-    addPublicKeysListHandler(routerFactory, blsSignerProvider, ETH2_LIST.name(), errorHandler);
+    // security handler for keymanager endpoints
+    routerBuilder.securityHandler(
+        "bearerAuth",
+        context -> {
+          // TODO Auth token security logic
+          final boolean authorized = true;
+          if (authorized) {
+            context.next();
+          } else {
+            context.response().setStatusCode(401).end("{ message: \"permission denied\" }");
+          }
+        });
+
+    addPublicKeysListHandler(routerBuilder, blsSignerProvider, ETH2_LIST.name(), errorHandler);
 
     final SignerForIdentifier<BlsArtifactSignature> blsSigner =
         new SignerForIdentifier<>(blsSignerProvider, this::formatBlsSignature, BLS);
-    routerFactory.addHandlerByOperationId(
-        ETH2_SIGN.name(),
-        new BlockingHandlerDecorator(
-            new Eth2SignForIdentifierHandler(
-                blsSigner,
-                new HttpApiMetrics(metricsSystem, BLS),
-                new SlashingProtectionMetrics(metricsSystem),
-                slashingProtection,
-                objectMapper,
-                eth2Spec),
-            false));
-    routerFactory.addFailureHandlerByOperationId(ETH2_SIGN.name(), errorHandler);
+    routerBuilder
+        .operation(ETH2_SIGN.name())
+        .handler(
+            new BlockingHandlerDecorator(
+                new Eth2SignForIdentifierHandler(
+                    blsSigner,
+                    new HttpApiMetrics(metricsSystem, BLS, blsSignerProvider),
+                    new SlashingProtectionMetrics(metricsSystem),
+                    slashingProtectionContext.map(SlashingProtectionContext::getSlashingProtection),
+                    objectMapper,
+                    eth2Spec),
+                false))
+        .failureHandler(errorHandler);
 
-    addReloadHandler(routerFactory, blsSignerProvider, RELOAD.name(), errorHandler);
+    addReloadHandler(routerBuilder, blsSignerProvider, RELOAD.name(), errorHandler);
+
+    if (isKeyManagerApiEnabled) {
+      routerBuilder
+          .operation(KEYMANAGER_LIST.name())
+          .handler(
+              new BlockingHandlerDecorator(
+                  new ListKeystoresHandler(blsSignerProvider, objectMapper), false))
+          .failureHandler(errorHandler);
+
+      final ValidatorManager validatorManager =
+          createValidatorManager(blsSignerProvider, objectMapper);
+
+      routerBuilder
+          .operation(KEYMANAGER_IMPORT.name())
+          .handler(
+              new BlockingHandlerDecorator(
+                  new ImportKeystoresHandler(
+                      objectMapper,
+                      config.getKeyConfigPath(),
+                      slashingProtectionContext.map(
+                          SlashingProtectionContext::getSlashingProtection),
+                      blsSignerProvider,
+                      validatorManager),
+                  false))
+          .failureHandler(errorHandler);
+
+      routerBuilder
+          .operation(KEYMANAGER_DELETE.name())
+          .handler(
+              new BlockingHandlerDecorator(
+                  new DeleteKeystoresHandler(
+                      objectMapper,
+                      slashingProtectionContext.map(
+                          SlashingProtectionContext::getSlashingProtection),
+                      blsSignerProvider,
+                      validatorManager),
+                  false))
+          .failureHandler(errorHandler);
+    }
+  }
+
+  private ValidatorManager createValidatorManager(
+      final ArtifactSignerProvider artifactSignerProvider, final ObjectMapper objectMapper) {
+    final FileValidatorManager fileValidatorManager =
+        new FileValidatorManager(
+            artifactSignerProvider,
+            new KeystoreFileManager(config.getKeyConfigPath()),
+            objectMapper);
+    if (slashingProtectionContext.isPresent()) {
+      final SlashingProtectionContext slashingProtectionContext =
+          this.slashingProtectionContext.get();
+      return new DbValidatorManager(
+          fileValidatorManager,
+          slashingProtectionContext.getRegisteredValidators(),
+          slashingProtectionContext.getSlashingProtectionJdbi(),
+          new ValidatorsDao());
+    } else {
+      return fileValidatorManager;
+    }
   }
 
   @Override
@@ -163,7 +257,10 @@ public class Eth2Runner extends Runner {
 
           try (final InterlockKeyProvider interlockKeyProvider = new InterlockKeyProvider(vertx);
               final YubiHsmOpaqueDataProvider yubiHsmOpaqueDataProvider =
-                  new YubiHsmOpaqueDataProvider()) {
+                  new YubiHsmOpaqueDataProvider();
+              final AwsSecretsManagerProvider awsSecretsManagerProvider =
+                  new AwsSecretsManagerProvider(
+                      awsSecretsManagerParameters.getCacheMaximumSize())) {
             final AbstractArtifactSignerFactory artifactSignerFactory =
                 new BlsArtifactSignerFactory(
                     config.getKeyConfigPath(),
@@ -171,17 +268,43 @@ public class Eth2Runner extends Runner {
                     hashicorpConnectionFactory,
                     interlockKeyProvider,
                     yubiHsmOpaqueDataProvider,
-                    BlsArtifactSigner::new);
+                    awsSecretsManagerProvider,
+                    (args) ->
+                        new BlsArtifactSigner(args.getKeyPair(), args.getOrigin(), args.getPath()));
 
             signers.addAll(
-                SignerLoader.load(
-                    config.getKeyConfigPath(),
-                    "yaml",
-                    new YamlSignerParser(List.of(artifactSignerFactory))));
+                new SignerLoader()
+                    .load(
+                        config.getKeyConfigPath(),
+                        "yaml",
+                        new YamlSignerParser(List.of(artifactSignerFactory))));
           }
 
           if (azureKeyVaultParameters.isAzureKeyVaultEnabled()) {
             signers.addAll(loadAzureSigners());
+          }
+
+          if (keystoresParameters.isEnabled()) {
+            final BlsKeystoreBulkLoader blsKeystoreBulkLoader = new BlsKeystoreBulkLoader();
+            final Collection<ArtifactSigner> keystoreSigners =
+                keystoresParameters.hasKeystoresPasswordsPath()
+                    ? blsKeystoreBulkLoader.loadKeystoresUsingPasswordDir(
+                        keystoresParameters.getKeystoresPath(),
+                        keystoresParameters.getKeystoresPasswordsPath())
+                    : blsKeystoreBulkLoader.loadKeystoresUsingPasswordFile(
+                        keystoresParameters.getKeystoresPath(),
+                        keystoresParameters.getKeystoresPasswordFile());
+            signers.addAll(keystoreSigners);
+          }
+
+          if (awsSecretsManagerParameters.isEnabled()) {
+            LOG.info("Bulk loading keys from AWS Secrets Manager ... ");
+            final AWSBulkLoadingArtifactSignerProvider awsBulkLoadingArtifactSignerProvider =
+                new AWSBulkLoadingArtifactSignerProvider();
+            final Collection<ArtifactSigner> awsSigners =
+                awsBulkLoadingArtifactSignerProvider.load(awsSecretsManagerParameters);
+            LOG.info("Keys loaded from AWS Secrets Manager: [{}]", awsSigners.size());
+            signers.addAll(awsSigners);
           }
 
           final List<Bytes> validators =
@@ -192,8 +315,8 @@ public class Eth2Runner extends Runner {
           if (validators.isEmpty()) {
             LOG.warn("No BLS keys loaded. Check that the key store has BLS key config files");
           } else {
-            slashingProtection.ifPresent(
-                slashingProtection1 -> slashingProtection1.registerValidators(validators));
+            slashingProtectionContext.ifPresent(
+                context -> context.getRegisteredValidators().registerValidators(validators));
           }
           return signers;
         });
@@ -202,18 +325,38 @@ public class Eth2Runner extends Runner {
   @Override
   public void run() {
     super.run();
-    if (pruningEnabled && slashingProtection.isPresent()) {
+    if (pruningEnabled && slashingProtectionContext.isPresent()) {
       scheduleAndExecuteInitialDbPruning();
     }
+    slashingProtectionContext.ifPresent(this::scheduleDbHealthCheck);
+  }
+
+  private void scheduleDbHealthCheck(final SlashingProtectionContext protectionContext) {
+    final DbHealthCheck dbHealthCheck =
+        new DbHealthCheck(
+            protectionContext, slashingProtectionParameters.getDbHealthCheckTimeoutMilliseconds());
+
+    Executors.newScheduledThreadPool(1)
+        .scheduleAtFixedRate(
+            dbHealthCheck,
+            0,
+            slashingProtectionParameters.getDbHealthCheckIntervalMilliseconds(),
+            TimeUnit.MILLISECONDS);
+
+    super.registerHealthCheckProcedure(
+        "slashing-protection-db-health-check",
+        promise -> promise.complete(dbHealthCheck.isDbUp() ? Status.OK() : Status.KO()));
   }
 
   private void scheduleAndExecuteInitialDbPruning() {
     final DbPrunerRunner dbPrunerRunner =
         new DbPrunerRunner(
             slashingProtectionParameters,
-            slashingProtection.get(),
+            slashingProtectionContext.get().getSlashingProtection(),
             Executors.newScheduledThreadPool(1));
-    dbPrunerRunner.execute();
+    if (slashingProtectionParameters.isPruningAtBootEnabled()) {
+      dbPrunerRunner.execute();
+    }
     dbPrunerRunner.schedule();
   }
 
@@ -227,7 +370,7 @@ public class Eth2Runner extends Runner {
             final Bytes privateKeyBytes = Bytes.fromHexString(value);
             final BLSKeyPair keyPair =
                 new BLSKeyPair(BLSSecretKey.fromBytes(Bytes32.wrap(privateKeyBytes)));
-            return new BlsArtifactSigner(keyPair);
+            return new BlsArtifactSigner(keyPair, SignerOrigin.AZURE);
           } catch (final Exception e) {
             LOG.error("Failed to load secret named {} from azure key vault.", name);
             return null;

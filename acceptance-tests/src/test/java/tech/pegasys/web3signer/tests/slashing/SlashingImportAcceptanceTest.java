@@ -17,11 +17,11 @@ import static tech.pegasys.web3signer.dsl.utils.WaitUtils.waitFor;
 
 import tech.pegasys.teku.bls.BLSKeyPair;
 import tech.pegasys.web3signer.BLSTestUtil;
-import tech.pegasys.web3signer.core.signing.KeyType;
 import tech.pegasys.web3signer.dsl.signer.Signer;
 import tech.pegasys.web3signer.dsl.signer.SignerConfigurationBuilder;
 import tech.pegasys.web3signer.dsl.utils.MetadataFileHelpers;
-import tech.pegasys.web3signer.slashingprotection.interchange.InterchangeModule;
+import tech.pegasys.web3signer.signing.KeyType;
+import tech.pegasys.web3signer.slashingprotection.interchange.InterchangeJsonProvider;
 import tech.pegasys.web3signer.slashingprotection.interchange.model.SignedAttestation;
 import tech.pegasys.web3signer.slashingprotection.interchange.model.SignedBlock;
 import tech.pegasys.web3signer.tests.AcceptanceTestBase;
@@ -34,7 +34,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
-import com.fasterxml.jackson.databind.MapperFeature;
 import com.google.common.io.Resources;
 import dsl.InterchangeV5Format;
 import dsl.SignedArtifacts;
@@ -50,9 +49,7 @@ public class SlashingImportAcceptanceTest extends AcceptanceTestBase {
   public static final String DB_PASSWORD = "postgres";
 
   private static final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
-      new com.fasterxml.jackson.databind.ObjectMapper()
-          .registerModule(new InterchangeModule())
-          .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS);
+      new InterchangeJsonProvider().getJsonMapper();
 
   protected final BLSKeyPair keyPair = BLSTestUtil.randomKeyPair(0);
 

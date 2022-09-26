@@ -13,8 +13,10 @@ jar {
 
 dependencies {
 
+  implementation project(":common")
   implementation project(":core")
   implementation project(":slashing-protection")
+  implementation project(":signing")
   implementation 'info.picocli:picocli'
   implementation 'com.google.guava:guava'
   implementation 'org.apache.logging.log4j:log4j-api'
@@ -23,10 +25,13 @@ dependencies {
   implementation 'org.hyperledger.besu.internal:metrics-core'
   implementation 'com.fasterxml.jackson.core:jackson-databind'
   implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml'
-  implementation 'commons-lang:commons-lang'
+  implementation 'org.apache.commons:commons-lang3'
 
   implementation 'tech.pegasys.teku.internal:spec'
   implementation 'tech.pegasys.teku.internal:unsigned'
+  implementation 'tech.pegasys.teku.internal:networks'
+  implementation 'tech.pegasys.teku.internal:json'
+  implementation 'tech.pegasys.teku.internal:jackson'
 
   runtimeOnly 'org.apache.logging.log4j:log4j-slf4j-impl'
 

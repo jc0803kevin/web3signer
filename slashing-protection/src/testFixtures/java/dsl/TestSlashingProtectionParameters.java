@@ -23,10 +23,15 @@ public class TestSlashingProtectionParameters implements SlashingProtectionParam
   private final String dbUser;
   private final String dbPassword;
   private final boolean pruningEnabled;
+  private final boolean pruningAtBootEnabled;
   private final int pruningEpochsToKeep;
   private final int pruningSlotsPerEpoch;
   private final long pruningInterval;
   private final Path dbPoolConfigurationFile;
+
+  private final int dbHealthCheckTimeoutMilliseconds;
+
+  private final int dbHealthCheckIntervalMilliseconds;
 
   public TestSlashingProtectionParameters(
       final String dbUrl, final String dbUser, final String dbPassword) {
@@ -38,7 +43,7 @@ public class TestSlashingProtectionParameters implements SlashingProtectionParam
       final String dbUser,
       final String dbPassword,
       Path dbPoolConfigurationFile) {
-    this(dbUrl, dbUser, dbPassword, dbPoolConfigurationFile, 0, 0, Long.MAX_VALUE);
+    this(dbUrl, dbUser, dbPassword, dbPoolConfigurationFile, 0, 0, Long.MAX_VALUE, 3000, 3000);
   }
 
   public TestSlashingProtectionParameters(
@@ -64,7 +69,9 @@ public class TestSlashingProtectionParameters implements SlashingProtectionParam
         null,
         pruningEpochsToKeep,
         pruningSlotsPerEpoch,
-        pruningInterval);
+        pruningInterval,
+        3000,
+        3000);
   }
 
   public TestSlashingProtectionParameters(
@@ -74,15 +81,20 @@ public class TestSlashingProtectionParameters implements SlashingProtectionParam
       final Path dbPoolConfigurationFile,
       final int pruningEpochsToKeep,
       final int pruningSlotsPerEpoch,
-      final long pruningInterval) {
+      final long pruningInterval,
+      final int dbHealthCheckTimeoutMilliseconds,
+      final int dbHealthCheckIntervalMilliseconds) {
     this.dbUrl = dbUrl;
     this.dbUser = dbUser;
     this.dbPassword = dbPassword;
     this.dbPoolConfigurationFile = dbPoolConfigurationFile;
     this.pruningEnabled = true;
+    this.pruningAtBootEnabled = true;
     this.pruningEpochsToKeep = pruningEpochsToKeep;
     this.pruningSlotsPerEpoch = pruningSlotsPerEpoch;
     this.pruningInterval = pruningInterval;
+    this.dbHealthCheckTimeoutMilliseconds = dbHealthCheckTimeoutMilliseconds;
+    this.dbHealthCheckIntervalMilliseconds = dbHealthCheckIntervalMilliseconds;
   }
 
   @Override
@@ -133,5 +145,20 @@ public class TestSlashingProtectionParameters implements SlashingProtectionParam
   @Override
   public Path getDbPoolConfigurationFile() {
     return dbPoolConfigurationFile;
+  }
+
+  @Override
+  public boolean isPruningAtBootEnabled() {
+    return pruningAtBootEnabled;
+  }
+
+  @Override
+  public long getDbHealthCheckTimeoutMilliseconds() {
+    return dbHealthCheckTimeoutMilliseconds;
+  }
+
+  @Override
+  public long getDbHealthCheckIntervalMilliseconds() {
+    return dbHealthCheckIntervalMilliseconds;
   }
 }

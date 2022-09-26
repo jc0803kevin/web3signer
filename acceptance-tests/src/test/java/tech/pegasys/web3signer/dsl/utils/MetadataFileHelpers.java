@@ -26,8 +26,8 @@ import tech.pegasys.signers.bls.keystore.model.Pbkdf2Param;
 import tech.pegasys.signers.bls.keystore.model.SCryptParam;
 import tech.pegasys.signers.hashicorp.dsl.certificates.CertificateHelpers;
 import tech.pegasys.teku.bls.BLSKeyPair;
-import tech.pegasys.web3signer.core.signing.KeyType;
 import tech.pegasys.web3signer.dsl.HashicorpSigningParams;
+import tech.pegasys.web3signer.signing.KeyType;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -39,12 +39,12 @@ import java.util.Map;
 import java.util.Optional;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 
 public class MetadataFileHelpers {
-  private static final ObjectMapper YAML_OBJECT_MAPPER = new ObjectMapper(new YAMLFactory());
+  private static final ObjectMapper YAML_OBJECT_MAPPER = YAMLMapper.builder().build();
   private static final Bytes SALT =
       Bytes.fromHexString("0x9ac471d9d421bc06d9aefe2b46cf96d11829c51e36ed0b116132be57a9f8c22b");
   private static final Bytes IV = Bytes.fromHexString("0xcca2c67ec95a1dd13edd986fea372789");
@@ -170,7 +170,7 @@ public class MetadataFileHelpers {
       final Map<String, String> signingMetadata = new HashMap<>();
       signingMetadata.put("type", "azure-key");
       signingMetadata.put("vaultName", keyVaultName);
-      signingMetadata.put("keyName", "TestKey");
+      signingMetadata.put("keyName", "TestKey2");
       signingMetadata.put("clientId", clientId);
       signingMetadata.put("clientSecret", clientSecret);
       signingMetadata.put("tenantId", tenantId);
@@ -220,6 +220,44 @@ public class MetadataFileHelpers {
     createYamlFile(metadataFilePath, yaml);
   }
 
+  public void createAwsYamlFileAt(
+      final Path metadataFilePath,
+      final String awsRegion,
+      final String accessKeyId,
+      final String secretAccessKey,
+      final String secretName) {
+    try {
+      final Map<String, String> signingMetadata = new HashMap<>();
+
+      signingMetadata.put("type", "aws-secret");
+      signingMetadata.put("authenticationMode", "SPECIFIED");
+      signingMetadata.put("region", awsRegion);
+      signingMetadata.put("accessKeyId", accessKeyId);
+      signingMetadata.put("secretAccessKey", secretAccessKey);
+      signingMetadata.put("secretName", secretName);
+
+      createYamlFile(metadataFilePath, signingMetadata);
+    } catch (final Exception e) {
+      throw new RuntimeException("Unable to construct aws yaml file", e);
+    }
+  }
+
+  public void createAwsYamlFileAt(
+      final Path metadataFilePath, final String awsRegion, final String secretName) {
+    try {
+      final Map<String, String> signingMetadata = new HashMap<>();
+
+      signingMetadata.put("type", "aws-secret");
+      signingMetadata.put("authenticationMode", "ENVIRONMENT");
+      signingMetadata.put("region", awsRegion);
+      signingMetadata.put("secretName", secretName);
+
+      createYamlFile(metadataFilePath, signingMetadata);
+    } catch (final Exception e) {
+      throw new RuntimeException("Unable to construct aws yaml file", e);
+    }
+  }
+
   private void createPasswordFile(final Path passwordFilePath, final String password) {
     try {
       Files.writeString(passwordFilePath, password);
@@ -240,7 +278,7 @@ public class MetadataFileHelpers {
             : new Pbkdf2Param(32, 262144, HMAC_SHA256, SALT);
     final Cipher cipher = new Cipher(CipherFunction.AES_128_CTR, IV);
     final KeyStoreData keyStoreData =
-        KeyStore.encrypt(privateKey, publicKey, password, "", kdfParam, cipher);
+        KeyStore.encrypt(privateKey, publicKey, password, "m/12381/3600/0/0/0", kdfParam, cipher);
     try {
       KeyStoreLoader.saveToFile(keyStoreFilePath, keyStoreData);
     } catch (IOException e) {

@@ -25,15 +25,19 @@ import tech.pegasys.teku.bls.BLSKeyPair;
 import tech.pegasys.teku.bls.BLSPublicKey;
 import tech.pegasys.teku.bls.BLSSecretKey;
 import tech.pegasys.teku.bls.BLSSignature;
+import tech.pegasys.teku.spec.SpecMilestone;
+import tech.pegasys.teku.spec.networks.Eth2Network;
+import tech.pegasys.web3signer.AwsSecretsManagerUtil;
 import tech.pegasys.web3signer.core.service.http.ArtifactType;
 import tech.pegasys.web3signer.core.service.http.handlers.signing.eth2.Eth2SigningRequestBody;
-import tech.pegasys.web3signer.core.signing.KeyType;
 import tech.pegasys.web3signer.dsl.HashicorpSigningParams;
 import tech.pegasys.web3signer.dsl.utils.Eth2RequestUtils;
 import tech.pegasys.web3signer.dsl.utils.MetadataFileHelpers;
+import tech.pegasys.web3signer.signing.KeyType;
 
 import java.nio.file.Path;
-import java.util.Map;
+import java.util.Collections;
+import java.util.Optional;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import io.restassured.http.ContentType;
@@ -66,7 +70,7 @@ public class BlsSigningAcceptanceTest extends SigningAcceptanceTestBase {
     final Path keyConfigFile = testDirectory.resolve(configFilename + ".yaml");
     metadataFileHelpers.createUnencryptedYamlFileAt(keyConfigFile, PRIVATE_KEY, KeyType.BLS);
 
-    signAndVerifySignature(artifactType, TEXT, null);
+    signAndVerifySignature(artifactType, TEXT);
   }
 
   @ParameterizedTest
@@ -77,7 +81,7 @@ public class BlsSigningAcceptanceTest extends SigningAcceptanceTestBase {
     final Path keyConfigFile = testDirectory.resolve(configFilename + ".yaml");
     metadataFileHelpers.createUnencryptedYamlFileAt(keyConfigFile, PRIVATE_KEY, KeyType.BLS);
 
-    signAndVerifySignature(artifactType, JSON, null);
+    signAndVerifySignature(artifactType, JSON);
   }
 
   @ParameterizedTest
@@ -88,7 +92,7 @@ public class BlsSigningAcceptanceTest extends SigningAcceptanceTestBase {
     final Path keyConfigFile = testDirectory.resolve(configFilename + ".yaml");
     metadataFileHelpers.createUnencryptedYamlFileAt(keyConfigFile, PRIVATE_KEY, KeyType.BLS);
     // this is same as not setting accept type at all - the client defaults to */* aka ANY
-    signAndVerifySignature(artifactType, ANY, null);
+    signAndVerifySignature(artifactType, ANY);
   }
 
   @ParameterizedTest
@@ -146,6 +150,56 @@ public class BlsSigningAcceptanceTest extends SigningAcceptanceTestBase {
     signAndVerifySignature(ArtifactType.BLOCK);
   }
 
+  @Test
+  @EnabledIfEnvironmentVariables({
+    @EnabledIfEnvironmentVariable(
+        named = "RW_AWS_ACCESS_KEY_ID",
+        matches = ".*",
+        disabledReason = "RW_AWS_ACCESS_KEY_ID env variable is required"),
+    @EnabledIfEnvironmentVariable(
+        named = "RW_AWS_SECRET_ACCESS_KEY",
+        matches = ".*",
+        disabledReason = "RW_AWS_SECRET_ACCESS_KEY env variable is required"),
+    @EnabledIfEnvironmentVariable(
+        named = "AWS_ACCESS_KEY_ID",
+        matches = ".*",
+        disabledReason = "AWS_ACCESS_KEY_ID env variable is required"),
+    @EnabledIfEnvironmentVariable(
+        named = "AWS_SECRET_ACCESS_KEY",
+        matches = ".*",
+        disabledReason = "AWS_SECRET_ACCESS_KEY env variable is required"),
+    @EnabledIfEnvironmentVariable(
+        named = "AWS_REGION",
+        matches = ".*",
+        disabledReason = "AWS_REGION env variable is required")
+  })
+  public void ableToSignUsingAws() throws JsonProcessingException {
+    final String rwAwsAccessKeyId = System.getenv("RW_AWS_ACCESS_KEY_ID");
+    final String rwAwsSecretAccessKey = System.getenv("RW_AWS_SECRET_ACCESS_KEY");
+    final String roAwsAccessKeyId = System.getenv("AWS_ACCESS_KEY_ID");
+    final String roAwsSecretAccessKey = System.getenv("AWS_SECRET_ACCESS_KEY");
+    final String region = Optional.ofNullable(System.getenv("AWS_REGION")).orElse("us-east-2");
+    final String publicKey = keyPair.getPublicKey().toString();
+
+    final AwsSecretsManagerUtil awsSecretsManagerUtil =
+        new AwsSecretsManagerUtil(region, rwAwsAccessKeyId, rwAwsSecretAccessKey);
+
+    awsSecretsManagerUtil.createSecret(publicKey, PRIVATE_KEY, Collections.emptyMap());
+    final String fullyPrefixKeyName = awsSecretsManagerUtil.getSecretsManagerPrefix() + publicKey;
+
+    final String configFilename = publicKey.substring(2);
+    final Path keyConfigFile = testDirectory.resolve(configFilename + ".yaml");
+    try {
+      metadataFileHelpers.createAwsYamlFileAt(
+          keyConfigFile, region, roAwsAccessKeyId, roAwsSecretAccessKey, fullyPrefixKeyName);
+
+      signAndVerifySignature(ArtifactType.BLOCK);
+    } finally {
+      awsSecretsManagerUtil.deleteSecret(publicKey);
+      awsSecretsManagerUtil.close();
+    }
+  }
+
   @ParameterizedTest
   @EnumSource
   public void failsIfSigningRootDoesNotMatchSigningData(final ArtifactType artifactType)
@@ -155,7 +209,7 @@ public class BlsSigningAcceptanceTest extends SigningAcceptanceTestBase {
     final Path keyConfigFile = testDirectory.resolve(configFilename + ".yaml");
     metadataFileHelpers.createKeyStoreYamlFileAt(keyConfigFile, keyPair, KdfFunction.SCRYPT);
 
-    setupSigner("eth2", null);
+    setupMinimalWeb3Signer(artifactType);
 
     final Eth2SigningRequestBody request = Eth2RequestUtils.createCannedRequest(artifactType);
     final Eth2SigningRequestBody requestWithMismatchedSigningRoot =
@@ -164,15 +218,17 @@ public class BlsSigningAcceptanceTest extends SigningAcceptanceTestBase {
             Bytes32.ZERO,
             request.getForkInfo(),
             request.getBlock(),
+            request.getBlockRequest(),
             request.getAttestation(),
             request.getAggregationSlot(),
             request.getAggregateAndProof(),
             request.getVoluntaryExit(),
             request.getRandaoReveal(),
             request.getDeposit(),
-            request.getSyncCommitteeSignature(),
+            request.getSyncCommitteeMessage(),
             request.getSyncAggregatorSelectionData(),
-            request.getContributionAndProof());
+            request.getContributionAndProof(),
+            request.getValidatorRegistration());
 
     final Response response =
         signer.eth2Sign(keyPair.getPublicKey().toString(), requestWithMismatchedSigningRoot);
@@ -190,7 +246,7 @@ public class BlsSigningAcceptanceTest extends SigningAcceptanceTestBase {
     final Path keyConfigFile = testDirectory.resolve(configFilename + ".yaml");
     metadataFileHelpers.createKeyStoreYamlFileAt(keyConfigFile, keyPair, KdfFunction.SCRYPT);
 
-    setupSigner("eth2", null);
+    setupMinimalWeb3Signer(ArtifactType.BLOCK);
 
     final Eth2SigningRequestBody request = Eth2RequestUtils.createBlockRequest();
 
@@ -200,15 +256,17 @@ public class BlsSigningAcceptanceTest extends SigningAcceptanceTestBase {
             null,
             request.getForkInfo(),
             request.getBlock(),
+            request.getBlockRequest(),
             request.getAttestation(),
             request.getAggregationSlot(),
             request.getAggregateAndProof(),
             request.getVoluntaryExit(),
             request.getRandaoReveal(),
             request.getDeposit(),
-            request.getSyncCommitteeSignature(),
+            request.getSyncCommitteeMessage(),
             request.getSyncAggregatorSelectionData(),
-            request.getContributionAndProof());
+            request.getContributionAndProof(),
+            request.getValidatorRegistration());
 
     final Response response =
         signer.eth2Sign(
@@ -231,15 +289,13 @@ public class BlsSigningAcceptanceTest extends SigningAcceptanceTestBase {
 
   private void signAndVerifySignature(final ArtifactType artifactType)
       throws JsonProcessingException {
-    signAndVerifySignature(artifactType, TEXT, null);
+    signAndVerifySignature(artifactType, TEXT);
   }
 
   private void signAndVerifySignature(
-      final ArtifactType artifactType,
-      final ContentType acceptMediaType,
-      final Map<String, String> env)
+      final ArtifactType artifactType, final ContentType acceptMediaType)
       throws JsonProcessingException {
-    setupSigner("eth2", env);
+    setupMinimalWeb3Signer(artifactType);
 
     // openapi
     final Eth2SigningRequestBody request = Eth2RequestUtils.createCannedRequest(artifactType);
@@ -250,6 +306,20 @@ public class BlsSigningAcceptanceTest extends SigningAcceptanceTestBase {
     final BLSSignature expectedSignature =
         BLS.sign(keyPair.getSecretKey(), request.getSigningRoot());
     assertThat(signature).isEqualTo(expectedSignature.toBytesCompressed());
+  }
+
+  private void setupMinimalWeb3Signer(ArtifactType artifactType) {
+    switch (artifactType) {
+      case BLOCK_V2:
+      case SYNC_COMMITTEE_MESSAGE:
+      case SYNC_COMMITTEE_SELECTION_PROOF:
+      case SYNC_COMMITTEE_CONTRIBUTION_AND_PROOF:
+        setupEth2Signer(Eth2Network.MINIMAL, SpecMilestone.ALTAIR);
+        break;
+      default:
+        setupEth2Signer(Eth2Network.MINIMAL, SpecMilestone.PHASE0);
+        break;
+    }
   }
 
   private ContentType expectedContentType(final ContentType acceptMediaType) {

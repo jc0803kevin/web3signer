@@ -14,17 +14,17 @@ package tech.pegasys.web3signer.dsl.signer;
 
 import static io.restassured.RestAssured.given;
 import static org.assertj.core.api.Assertions.assertThat;
-import static tech.pegasys.web3signer.core.signing.KeyType.BLS;
 import static tech.pegasys.web3signer.dsl.tls.TlsClientHelper.createRequestSpecification;
 import static tech.pegasys.web3signer.dsl.utils.WaitUtils.waitFor;
+import static tech.pegasys.web3signer.signing.KeyType.BLS;
 import static tech.pegasys.web3signer.tests.AcceptanceTestBase.JSON_RPC_PATH;
 
-import tech.pegasys.web3signer.core.service.http.SigningJsonModule;
+import tech.pegasys.web3signer.core.service.http.SigningObjectMapperFactory;
 import tech.pegasys.web3signer.core.service.http.handlers.signing.eth2.Eth2SigningRequestBody;
-import tech.pegasys.web3signer.core.signing.KeyType;
 import tech.pegasys.web3signer.dsl.lotus.FilecoinJsonRpcEndpoint;
 import tech.pegasys.web3signer.dsl.signer.runner.Web3SignerRunner;
 import tech.pegasys.web3signer.dsl.tls.ClientTlsConfig;
+import tech.pegasys.web3signer.signing.KeyType;
 
 import java.util.Arrays;
 import java.util.List;
@@ -59,11 +59,10 @@ public class Signer extends FilecoinJsonRpcEndpoint {
   public static final String RELOAD_ENDPOINT = "/reload";
 
   public static final ObjectMapper ETH_2_INTERFACE_OBJECT_MAPPER =
-      new ObjectMapper()
-          .registerModule(new SigningJsonModule())
-          .setSerializationInclusion(Include.NON_NULL);
+      SigningObjectMapperFactory.createObjectMapper().setSerializationInclusion(Include.NON_NULL);
   private static final String METRICS_ENDPOINT = "/metrics";
 
+  private final SignerConfiguration signerConfig;
   private final Web3SignerRunner runner;
   private final String hostname;
   private final Vertx vertx;
@@ -72,6 +71,7 @@ public class Signer extends FilecoinJsonRpcEndpoint {
 
   public Signer(final SignerConfiguration signerConfig, final ClientTlsConfig clientTlsConfig) {
     super(JSON_RPC_PATH);
+    this.signerConfig = signerConfig;
     this.runner = Web3SignerRunner.createRunner(signerConfig);
     this.hostname = signerConfig.hostname();
     this.urlFormatting =
@@ -107,8 +107,7 @@ public class Signer extends FilecoinJsonRpcEndpoint {
 
   public void awaitStartupCompletion() {
     LOG.info("Waiting for Signer to become responsive...");
-    final int secondsToWait = Boolean.getBoolean("debugSubProcess") ? 3600 : 30;
-    waitFor(secondsToWait, () -> assertThat(getUpcheckStatus()).isEqualTo(200));
+    waitFor(signerConfig.getStartupTimeout(), () -> assertThat(getUpcheckStatus()).isEqualTo(200));
     LOG.info("Signer is now responsive");
   }
 
@@ -148,7 +147,7 @@ public class Signer extends FilecoinJsonRpcEndpoint {
         .body(ETH_2_INTERFACE_OBJECT_MAPPER.writeValueAsString(ethSignBody))
         .log()
         .all(true)
-        .post(signPath(KeyType.BLS));
+        .post(signPath(BLS));
   }
 
   public Response callApiPublicKeys(final KeyType keyType) {

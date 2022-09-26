@@ -31,8 +31,8 @@ import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import org.apache.commons.lang.ArrayUtils;
+import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import org.apache.commons.lang3.ArrayUtils;
 import picocli.CommandLine;
 import picocli.CommandLine.IDefaultValueProvider;
 import picocli.CommandLine.Model.ArgSpec;
@@ -67,10 +67,10 @@ public class YamlConfigFileDefaultProvider implements IDefaultValueProvider {
   }
 
   private Map<String, Object> loadConfigurationFromFile() {
-    final ObjectMapper objectMapper = new ObjectMapper(new YAMLFactory());
+    final ObjectMapper yamlMapper = YAMLMapper.builder().build();
 
     try {
-      return objectMapper.readValue(configFile, new TypeReference<>() {});
+      return yamlMapper.readValue(configFile, new TypeReference<>() {});
     } catch (final FileNotFoundException | NoSuchFileException e) {
       throwParameterException(
           e, "Unable to read yaml configuration. File not found: " + configFile);

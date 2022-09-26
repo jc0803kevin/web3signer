@@ -12,11 +12,12 @@
  */
 package tech.pegasys.web3signer.tests.signing;
 
+import tech.pegasys.teku.spec.SpecMilestone;
+import tech.pegasys.teku.spec.networks.Eth2Network;
 import tech.pegasys.web3signer.dsl.signer.SignerConfigurationBuilder;
 import tech.pegasys.web3signer.tests.AcceptanceTestBase;
 
 import java.nio.file.Path;
-import java.util.Map;
 
 import io.restassured.http.ContentType;
 import io.restassured.response.Response;
@@ -26,18 +27,57 @@ import org.junit.jupiter.api.io.TempDir;
 public class SigningAcceptanceTestBase extends AcceptanceTestBase {
   protected @TempDir Path testDirectory;
 
-  protected void setupSigner(final String mode) {
-    setupSigner(mode, null);
+  protected void setupEth1Signer() {
+    final SignerConfigurationBuilder builder = new SignerConfigurationBuilder();
+    builder.withKeyStoreDirectory(testDirectory).withMode("eth1");
+    startSigner(builder.build());
   }
 
-  protected void setupSigner(final String mode, final Map<String, String> env) {
+  protected void setupFilecoinSigner() {
+    final SignerConfigurationBuilder builder = new SignerConfigurationBuilder();
+    builder.withKeyStoreDirectory(testDirectory).withMode("filecoin");
+    startSigner(builder.build());
+  }
+
+  protected void setupEth2Signer(final Eth2Network eth2Network, final SpecMilestone specMilestone) {
     final SignerConfigurationBuilder builder = new SignerConfigurationBuilder();
     builder
         .withKeyStoreDirectory(testDirectory)
-        .withMode(mode)
-        .withAltairForkEpoch(0)
-        .withEnvironment(env);
+        .withMode("eth2")
+        .withNetwork(eth2Network.configName());
+
+    setForkEpochs(specMilestone, builder);
+
     startSigner(builder.build());
+  }
+
+  protected void setupEth2SignerWithCustomNetworkConfig(final Path networkConfigFile) {
+    final SignerConfigurationBuilder builder = new SignerConfigurationBuilder();
+    builder.withKeyStoreDirectory(testDirectory).withMode("eth2").withNetwork(networkConfigFile);
+
+    // no need to set custom fork epochs as they are meant to be provided in networkConfigFile
+
+    startSigner(builder.build());
+  }
+
+  private void setForkEpochs(SpecMilestone specMilestone, SignerConfigurationBuilder builder) {
+    switch (specMilestone) {
+      case PHASE0:
+        break;
+      case ALTAIR:
+        builder.withAltairForkEpoch(0L);
+        break;
+      case BELLATRIX:
+        // As we are setting manual epoch, Teku libraries doesn't seem to work when Bellatrix epoch
+        // is set to 0 while Altair is not set (as it attempts to calculate difference
+        // between two forks). Hence, set both forks to 0.
+        builder.withAltairForkEpoch(0L);
+        builder.withBellatrixForkEpoch(0L);
+        break;
+      default:
+        throw new IllegalStateException(
+            "Setting manual fork epoch is not yet implemented for " + specMilestone);
+    }
   }
 
   protected Bytes verifyAndGetSignatureResponse(final Response response) {

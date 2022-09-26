@@ -12,6 +12,8 @@
  */
 package tech.pegasys.web3signer.slashingprotection;
 
+import tech.pegasys.web3signer.slashingprotection.interchange.IncrementalExporter;
+
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.List;
@@ -32,11 +34,21 @@ public interface SlashingProtection {
   boolean maySignBlock(
       Bytes publicKey, Bytes signingRoot, UInt64 blockSlot, Bytes32 genesisValidatorsRoot);
 
-  void registerValidators(List<Bytes> validators);
+  boolean hasSlashingProtectionDataFor(Bytes publicKey);
 
-  void export(OutputStream output);
+  void exportData(OutputStream output);
+
+  void exportDataWithFilter(OutputStream output, List<String> pubkeys);
+
+  IncrementalExporter createIncrementalExporter(OutputStream out);
 
   void importData(InputStream output);
 
+  void importDataWithFilter(InputStream output, List<String> pubkeys);
+
   void prune();
+
+  boolean isEnabledValidator(Bytes publicKey);
+
+  void updateValidatorEnabledStatus(Bytes publicKey, boolean enabled);
 }

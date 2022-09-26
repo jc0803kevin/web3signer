@@ -15,15 +15,16 @@ package tech.pegasys.web3signer.core.service.http.handlers.signing;
 import static io.vertx.core.http.HttpHeaders.CONTENT_TYPE;
 import static tech.pegasys.web3signer.core.service.http.handlers.ContentTypes.TEXT_PLAIN_UTF_8;
 import static tech.pegasys.web3signer.core.service.http.handlers.signing.SignerForIdentifier.toBytes;
-import static tech.pegasys.web3signer.core.util.IdentifierUtils.normaliseIdentifier;
+import static tech.pegasys.web3signer.signing.util.IdentifierUtils.normaliseIdentifier;
 
 import tech.pegasys.web3signer.core.service.http.metrics.HttpApiMetrics;
 
 import io.vertx.core.Handler;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
-import io.vertx.ext.web.api.RequestParameter;
-import io.vertx.ext.web.api.RequestParameters;
+import io.vertx.ext.web.validation.RequestParameter;
+import io.vertx.ext.web.validation.RequestParameters;
+import io.vertx.ext.web.validation.ValidationHandler;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
@@ -44,7 +45,7 @@ public class Eth1SignForIdentifierHandler implements Handler<RoutingContext> {
   @Override
   public void handle(final RoutingContext routingContext) {
     try (final TimingContext ignored = metrics.getSigningTimer().startTimer()) {
-      final RequestParameters params = routingContext.get("parsedParameters");
+      final RequestParameters params = routingContext.get(ValidationHandler.REQUEST_CONTEXT_KEY);
       final String identifier = params.pathParameter("identifier").toString();
       final Bytes data;
       try {
@@ -59,9 +60,7 @@ public class Eth1SignForIdentifierHandler implements Handler<RoutingContext> {
       signerForIdentifier
           .sign(normaliseIdentifier(identifier), data)
           .ifPresentOrElse(
-              signature -> {
-                respondWithSignature(routingContext, signature);
-              },
+              signature -> respondWithSignature(routingContext, signature),
               () -> {
                 LOG.trace("Identifier not found {}", identifier);
                 metrics.getMissingSignerCounter().inc();

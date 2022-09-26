@@ -12,6 +12,8 @@
  */
 package tech.pegasys.web3signer.slashingprotection;
 
+import static db.DatabaseUtil.PASSWORD;
+import static db.DatabaseUtil.USERNAME;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import tech.pegasys.web3signer.slashingprotection.dao.SignedAttestation;
@@ -44,16 +46,17 @@ public class PruningIntegrationTest extends IntegrationTestBase {
       final int slotsPerEpoch,
       final int expectedLowestPopulatedEpoch,
       final int expectedLowestPopulatedSlot) {
-    final SlashingProtection slashingProtection =
-        SlashingProtectionFactory.createSlashingProtection(
+    final SlashingProtectionContext slashingProtectionContext =
+        SlashingProtectionContextFactory.create(
             new TestSlashingProtectionParameters(
                 databaseUrl, USERNAME, PASSWORD, amountToKeep, slotsPerEpoch));
     final int size = 10;
-    insertValidatorAndCreateSlashingData(slashingProtection, size, size, 1);
+    insertValidatorAndCreateSlashingData(
+        slashingProtectionContext.getRegisteredValidators(), size, size, 1);
     final List<SignedAttestation> allAttestations = fetchAttestations(1);
     final List<SignedBlock> allBlocks = fetchBlocks(1);
 
-    slashingProtection.prune();
+    slashingProtectionContext.getSlashingProtection().prune();
 
     final List<SignedAttestation> expectedAttestations =
         allAttestations.subList(expectedLowestPopulatedEpoch, size);
@@ -77,14 +80,15 @@ public class PruningIntegrationTest extends IntegrationTestBase {
 
   @Test
   void dataUnchangedForNonRegisteredValidators() {
-    final SlashingProtection slashingProtection =
-        SlashingProtectionFactory.createSlashingProtection(
+    final SlashingProtectionContext slashingProtectionContext =
+        SlashingProtectionContextFactory.create(
             new TestSlashingProtectionParameters(databaseUrl, USERNAME, PASSWORD, 1, 1));
     jdbi.withHandle(h -> validators.registerValidators(h, List.of(Bytes.of(1))));
     createSlashingData(2, 2, 1);
-    insertValidatorAndCreateSlashingData(slashingProtection, 2, 2, 2);
+    insertValidatorAndCreateSlashingData(
+        slashingProtectionContext.getRegisteredValidators(), 2, 2, 2);
 
-    slashingProtection.prune();
+    slashingProtectionContext.getSlashingProtection().prune();
 
     final List<SignedAttestation> attestationsForValidator1 = fetchAttestations(1);
     assertThat(attestationsForValidator1).hasSize(2);
@@ -95,16 +99,17 @@ public class PruningIntegrationTest extends IntegrationTestBase {
 
   @Test
   void watermarkIsNotMovedLower() {
-    final SlashingProtection slashingProtection =
-        SlashingProtectionFactory.createSlashingProtection(
+    final SlashingProtectionContext slashingProtectionContext =
+        SlashingProtectionContextFactory.create(
             new TestSlashingProtectionParameters(databaseUrl, USERNAME, PASSWORD, 5, 1));
-    insertValidatorAndCreateSlashingData(slashingProtection, 10, 10, 1);
+    insertValidatorAndCreateSlashingData(
+        slashingProtectionContext.getRegisteredValidators(), 10, 10, 1);
     jdbi.useTransaction(
         h -> {
           lowWatermarkDao.updateSlotWatermarkFor(h, 1, UInt64.valueOf(8));
           lowWatermarkDao.updateEpochWatermarksFor(h, 1, UInt64.valueOf(8), UInt64.valueOf(8));
         });
-    slashingProtection.prune();
+    slashingProtectionContext.getSlashingProtection().prune();
 
     // we are only able to prune 2 entries because the watermark is at 8
     assertThat(fetchAttestations(1)).hasSize(2);
@@ -114,10 +119,10 @@ public class PruningIntegrationTest extends IntegrationTestBase {
 
   @Test
   void noPruningOccursWhenThereIsNoWatermark() {
-    final SlashingProtection slashingProtection =
-        SlashingProtectionFactory.createSlashingProtection(
+    final SlashingProtectionContext slashingProtectionContext =
+        SlashingProtectionContextFactory.create(
             new TestSlashingProtectionParameters(databaseUrl, USERNAME, PASSWORD, 1, 1));
-    slashingProtection.registerValidators(List.of(Bytes.of(1)));
+    slashingProtectionContext.getRegisteredValidators().registerValidators(List.of(Bytes.of(1)));
     for (int i = 0; i < 5; i++) {
       insertBlockAt(UInt64.valueOf(i), 1);
     }
@@ -125,17 +130,17 @@ public class PruningIntegrationTest extends IntegrationTestBase {
       insertAttestationAt(UInt64.valueOf(i), UInt64.valueOf(i), 1);
     }
 
-    slashingProtection.prune();
+    slashingProtectionContext.getSlashingProtection().prune();
     assertThat(fetchAttestations(1)).hasSize(5);
     assertThat(fetchBlocks(1)).hasSize(5);
   }
 
   @Test
   void prunesForDataWithGaps() {
-    final SlashingProtection slashingProtection =
-        SlashingProtectionFactory.createSlashingProtection(
+    final SlashingProtectionContext slashingProtectionContext =
+        SlashingProtectionContextFactory.create(
             new TestSlashingProtectionParameters(databaseUrl, USERNAME, PASSWORD, 5, 1));
-    slashingProtection.registerValidators(List.of(Bytes.of(1)));
+    slashingProtectionContext.getRegisteredValidators().registerValidators(List.of(Bytes.of(1)));
 
     for (int i = 0; i < 2; i++) {
       insertAttestationAt(UInt64.valueOf(i), UInt64.valueOf(i + 1), 1);
@@ -151,7 +156,7 @@ public class PruningIntegrationTest extends IntegrationTestBase {
           lowWatermarkDao.updateEpochWatermarksFor(h, 1, UInt64.ZERO, UInt64.ZERO);
         });
 
-    slashingProtection.prune();
+    slashingProtectionContext.getSlashingProtection().prune();
 
     assertThat(fetchAttestations(1)).hasSize(2);
     assertThat(fetchBlocks(1)).hasSize(2);
@@ -162,10 +167,10 @@ public class PruningIntegrationTest extends IntegrationTestBase {
 
   @Test
   void prunesForDataWithGapsAndDoesNotDeleteAllData() {
-    final SlashingProtection slashingProtection =
-        SlashingProtectionFactory.createSlashingProtection(
+    final SlashingProtectionContext slashingProtectionContext =
+        SlashingProtectionContextFactory.create(
             new TestSlashingProtectionParameters(databaseUrl, USERNAME, PASSWORD, 5, 1));
-    slashingProtection.registerValidators(List.of(Bytes.of(1)));
+    slashingProtectionContext.getRegisteredValidators().registerValidators(List.of(Bytes.of(1)));
 
     for (int i = 0; i < 2; i++) {
       insertAttestationAt(UInt64.valueOf(i), UInt64.valueOf(i + 1), 1);
@@ -179,7 +184,7 @@ public class PruningIntegrationTest extends IntegrationTestBase {
           lowWatermarkDao.updateEpochWatermarksFor(h, 1, UInt64.ZERO, UInt64.ZERO);
         });
 
-    slashingProtection.prune();
+    slashingProtectionContext.getSlashingProtection().prune();
 
     assertThat(fetchAttestations(1)).hasSize(1);
     assertThat(fetchBlocks(1)).hasSize(1);

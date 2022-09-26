@@ -23,11 +23,13 @@ import tech.pegasys.web3signer.slashingprotection.validator.GenesisValidatorRoot
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.List;
+import java.util.Optional;
 
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.logging.log4j.LogManager;
@@ -49,7 +51,7 @@ public class InterchangeV5Importer {
   private final SignedAttestationsDao signedAttestationsDao;
   private final MetadataDao metadataDao;
   private final LowWatermarkDao lowWatermarkDao;
-  private final ObjectMapper mapper;
+  private static final JsonMapper JSON_MAPPER = new InterchangeJsonProvider().getJsonMapper();
 
   public InterchangeV5Importer(
       final Jdbi jdbi,
@@ -57,24 +59,31 @@ public class InterchangeV5Importer {
       final SignedBlocksDao signedBlocksDao,
       final SignedAttestationsDao signedAttestationsDao,
       final MetadataDao metadataDao,
-      final LowWatermarkDao lowWatermarkDao,
-      final ObjectMapper mapper) {
+      final LowWatermarkDao lowWatermarkDao) {
     this.jdbi = jdbi;
     this.validatorsDao = validatorsDao;
     this.signedBlocksDao = signedBlocksDao;
     this.signedAttestationsDao = signedAttestationsDao;
     this.metadataDao = metadataDao;
     this.lowWatermarkDao = lowWatermarkDao;
-    this.mapper = mapper;
   }
 
   public void importData(final InputStream input) throws IOException {
+    importDataInternal(input, Optional.empty());
+  }
 
-    try (final JsonParser jsonParser = mapper.getFactory().createParser(input)) {
-      final ObjectNode rootNode = mapper.readTree(jsonParser);
+  public void importDataWithFilter(final InputStream input, final List<String> pubkeys)
+      throws IOException {
+    importDataInternal(input, Optional.of(pubkeys));
+  }
+
+  private void importDataInternal(final InputStream input, final Optional<List<String>> pubkeys)
+      throws IOException {
+    try (final JsonParser jsonParser = JSON_MAPPER.getFactory().createParser(input)) {
+      final ObjectNode rootNode = JSON_MAPPER.readTree(jsonParser);
 
       final JsonNode metadataJsonNode = rootNode.get("metadata");
-      final Metadata metadata = mapper.treeToValue(metadataJsonNode, Metadata.class);
+      final Metadata metadata = JSON_MAPPER.treeToValue(metadataJsonNode, Metadata.class);
 
       if (!metadata.getFormatVersion().equals(FORMAT_VERSION)) {
         throw new IllegalStateException(
@@ -96,7 +105,7 @@ public class InterchangeV5Importer {
             for (int i = 0; i < dataNode.size(); i++) {
               try {
                 final JsonNode validatorNode = dataNode.get(i);
-                parseValidator(h, validatorNode);
+                parseValidator(h, validatorNode, pubkeys);
               } catch (final IllegalArgumentException e) {
                 LOG.error("Failed to parse validator {}, due to {}", i, e.getMessage());
                 throw e;
@@ -106,14 +115,25 @@ public class InterchangeV5Importer {
     }
   }
 
-  private void parseValidator(final Handle handle, final JsonNode node)
+  private void parseValidator(
+      final Handle handle, final JsonNode node, final Optional<List<String>> pubkeys)
       throws JsonProcessingException {
     if (node.isArray()) {
       throw new IllegalStateException("Element of 'data' was not an object");
     }
     final ObjectNode parentNode = (ObjectNode) node;
     final String pubKey = parentNode.required("pubkey").textValue();
-    final Validator validator = validatorsDao.insertIfNotExist(handle, Bytes.fromHexString(pubKey));
+
+    if (pubkeys.isPresent() && !pubkeys.get().contains(pubKey)) {
+      LOG.info("Skipping data import for validator " + pubKey);
+      return;
+    }
+    final List<Validator> validators =
+        validatorsDao.registerValidators(handle, List.of(Bytes.fromHexString(pubKey)));
+    if (validators.isEmpty()) {
+      throw new IllegalStateException("Unable to register validator " + pubKey);
+    }
+    final Validator validator = validators.get(0);
 
     final ArrayNode signedBlocksNode = parentNode.withArray("signed_blocks");
     importBlocks(handle, validator, signedBlocksNode);
@@ -127,7 +147,7 @@ public class InterchangeV5Importer {
       throws JsonProcessingException {
 
     final BlockImporter blockImporter =
-        new BlockImporter(validator, handle, mapper, lowWatermarkDao, signedBlocksDao);
+        new BlockImporter(validator, handle, JSON_MAPPER, lowWatermarkDao, signedBlocksDao);
     blockImporter.importFrom(signedBlocksNode);
   }
 
@@ -136,7 +156,8 @@ public class InterchangeV5Importer {
       throws JsonProcessingException {
 
     final AttestationImporter attestationImporter =
-        new AttestationImporter(validator, handle, mapper, lowWatermarkDao, signedAttestationsDao);
+        new AttestationImporter(
+            validator, handle, JSON_MAPPER, lowWatermarkDao, signedAttestationsDao);
 
     attestationImporter.importFrom(signedAttestationNode);
   }

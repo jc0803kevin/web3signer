@@ -24,12 +24,14 @@ import tech.pegasys.web3signer.slashingprotection.interchange.model.Metadata;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.util.List;
 import java.util.Optional;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import org.jdbi.v3.core.Handle;
 import org.jdbi.v3.core.Jdbi;
@@ -38,7 +40,7 @@ public class InterchangeV5Exporter {
 
   private static final Logger LOG = LogManager.getLogger();
 
-  private static final String FORMAT_VERSION = "5";
+  static final String FORMAT_VERSION = "5";
 
   private final Jdbi jdbi;
   private final ValidatorsDao validatorsDao;
@@ -46,7 +48,7 @@ public class InterchangeV5Exporter {
   private final SignedAttestationsDao signedAttestationsDao;
   private final MetadataDao metadataDao;
   private final LowWatermarkDao lowWatermarkDao;
-  private final ObjectMapper mapper;
+  private static final ObjectMapper JSON_MAPPER = new InterchangeJsonProvider().getJsonMapper();
 
   public InterchangeV5Exporter(
       final Jdbi jdbi,
@@ -54,40 +56,62 @@ public class InterchangeV5Exporter {
       final SignedBlocksDao signedBlocksDao,
       final SignedAttestationsDao signedAttestationsDao,
       final MetadataDao metadataDao,
-      final LowWatermarkDao lowWatermarkDao,
-      final ObjectMapper mapper) {
+      final LowWatermarkDao lowWatermarkDao) {
     this.jdbi = jdbi;
     this.validatorsDao = validatorsDao;
     this.signedBlocksDao = signedBlocksDao;
     this.signedAttestationsDao = signedAttestationsDao;
     this.metadataDao = metadataDao;
     this.lowWatermarkDao = lowWatermarkDao;
-    this.mapper = mapper;
   }
 
-  public void export(final OutputStream out) throws IOException {
-    try (final JsonGenerator jsonGenerator = mapper.getFactory().createGenerator(out)) {
-      final Optional<Bytes32> gvr = jdbi.inTransaction(metadataDao::findGenesisValidatorsRoot);
-      if (gvr.isEmpty()) {
-        throw new RuntimeException("No genesis validators root for slashing protection data");
-      }
+  public void exportData(final OutputStream out) throws IOException {
+    exportInternal(out, Optional.empty());
+  }
 
-      jsonGenerator.writeStartObject();
+  public IncrementalExporter createIncrementalExporter(final OutputStream out) throws IOException {
+    return new IncrementalInterchangeV5Exporter(out);
+  }
 
-      final Metadata metadata = new Metadata(FORMAT_VERSION, gvr.get());
+  public void exportDataWithFilter(OutputStream out, List<String> pubkeys) throws IOException {
+    exportInternal(out, Optional.of(pubkeys));
+  }
 
-      jsonGenerator.writeFieldName("metadata");
-      mapper.writeValue(jsonGenerator, metadata);
-
-      jsonGenerator.writeArrayFieldStart("data");
-      populateInterchangeData(jsonGenerator);
-      jsonGenerator.writeEndArray();
-
-      jsonGenerator.writeEndObject();
+  private void exportInternal(final OutputStream out, final Optional<List<String>> pubkeys)
+      throws IOException {
+    try (final JsonGenerator jsonGenerator = JSON_MAPPER.getFactory().createGenerator(out)) {
+      startInterchangeExport(jsonGenerator);
+      populateInterchangeData(jsonGenerator, pubkeys);
+      finaliseInterchangeExport(jsonGenerator);
     }
   }
 
-  private void populateInterchangeData(final JsonGenerator jsonGenerator) {
+  private void startInterchangeExport(final JsonGenerator jsonGenerator) throws IOException {
+    final Optional<Bytes32> gvr = jdbi.inTransaction(metadataDao::findGenesisValidatorsRoot);
+    if (gvr.isEmpty()) {
+      throw new RuntimeException("No genesis validators root for slashing protection data");
+    }
+
+    jsonGenerator.writeStartObject();
+
+    final Metadata metadata = new Metadata(FORMAT_VERSION, gvr.get());
+
+    jsonGenerator.writeFieldName("metadata");
+    JSON_MAPPER.writeValue(jsonGenerator, metadata);
+
+    jsonGenerator.writeArrayFieldStart("data");
+  }
+
+  private void finaliseInterchangeExport(final JsonGenerator jsonGenerator) throws IOException {
+    // end the data array
+    jsonGenerator.writeEndArray();
+
+    // end the interchange object
+    jsonGenerator.writeEndObject();
+  }
+
+  private void populateInterchangeData(
+      final JsonGenerator jsonGenerator, final Optional<List<String>> pubkeys) {
     jdbi.useTransaction(
         h ->
             validatorsDao
@@ -95,7 +119,24 @@ public class InterchangeV5Exporter {
                 .forEach(
                     validator -> {
                       try {
-                        populateValidatorRecord(h, validator, jsonGenerator);
+                        populateValidatorRecord(h, validator, jsonGenerator, pubkeys);
+                      } catch (final IOException e) {
+                        throw new UncheckedIOException(
+                            "Failed to construct a validator entry in json", e);
+                      }
+                    }));
+  }
+
+  protected void populateInterchangeData(final JsonGenerator jsonGenerator, final String pubkey) {
+    jdbi.useTransaction(
+        h ->
+            validatorsDao.retrieveValidators(h, List.of(Bytes.fromHexString(pubkey))).stream()
+                .findFirst()
+                .ifPresent(
+                    validator -> {
+                      try {
+                        populateValidatorRecord(
+                            h, validator, jsonGenerator, Optional.of(List.of(pubkey)));
                       } catch (final IOException e) {
                         throw new UncheckedIOException(
                             "Failed to construct a validator entry in json", e);
@@ -104,8 +145,15 @@ public class InterchangeV5Exporter {
   }
 
   private void populateValidatorRecord(
-      final Handle handle, final Validator validator, final JsonGenerator jsonGenerator)
+      final Handle handle,
+      final Validator validator,
+      final JsonGenerator jsonGenerator,
+      final Optional<List<String>> pubkeys)
       throws IOException {
+    if (pubkeys.isPresent() && !pubkeys.get().contains(validator.getPublicKey().toHexString())) {
+      LOG.info("Skipping data export for validator " + validator.getPublicKey().toHexString());
+      return;
+    }
     final Optional<SigningWatermark> watermark =
         lowWatermarkDao.findLowWatermarkForValidator(handle, validator.getId());
     if (watermark.isEmpty()) {
@@ -146,7 +194,7 @@ public class InterchangeV5Exporter {
                           new tech.pegasys.web3signer.slashingprotection.interchange.model
                               .SignedBlock(block.getSlot(), block.getSigningRoot().orElse(null));
                   try {
-                    mapper.writeValue(jsonGenerator, jsonBlock);
+                    JSON_MAPPER.writeValue(jsonGenerator, jsonBlock);
                   } catch (final IOException e) {
                     throw new UncheckedIOException(
                         "Failed to construct a signed_blocks entry in json", e);
@@ -191,7 +239,7 @@ public class InterchangeV5Exporter {
                               attestation.getTargetEpoch(),
                               attestation.getSigningRoot().orElse(null));
                   try {
-                    mapper.writeValue(jsonGenerator, jsonAttestation);
+                    JSON_MAPPER.writeValue(jsonGenerator, jsonAttestation);
                   } catch (final IOException e) {
                     throw new UncheckedIOException(
                         "Failed to construct a signed_attestations entry in json", e);
@@ -206,5 +254,31 @@ public class InterchangeV5Exporter {
               });
     }
     jsonGenerator.writeEndArray();
+  }
+
+  public class IncrementalInterchangeV5Exporter implements IncrementalExporter {
+    final JsonGenerator jsonGenerator;
+
+    public IncrementalInterchangeV5Exporter(final OutputStream outputStream) throws IOException {
+      LOG.info("Exporting slashing protection database");
+      jsonGenerator = JSON_MAPPER.getFactory().createGenerator(outputStream);
+      startInterchangeExport(jsonGenerator);
+    }
+
+    @Override
+    public void export(final String publicKey) {
+      populateInterchangeData(jsonGenerator, publicKey);
+    }
+
+    @Override
+    public void finalise() throws IOException {
+      finaliseInterchangeExport(jsonGenerator);
+      LOG.info("Exporting complete");
+    }
+
+    @Override
+    public void close() throws Exception {
+      jsonGenerator.close();
+    }
   }
 }

@@ -13,35 +13,31 @@
 package tech.pegasys.web3signer.slashingprotection.dao;
 
 import java.util.List;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.jdbi.v3.core.Handle;
-import org.jdbi.v3.core.statement.PreparedBatch;
 import org.jdbi.v3.sqlobject.customizer.BindList;
 
 public class ValidatorsDao {
 
-  public Validator insertIfNotExist(final Handle handle, final Bytes validator) {
-    final List<Validator> result =
-        handle
-            .createUpdate("INSERT INTO validators (public_key) VALUES (?) ON CONFLICT DO NOTHING")
-            .bind(0, validator)
-            .executeAndReturnGeneratedKeys()
-            .mapToBean(Validator.class)
-            .list();
-
-    if (result.isEmpty()) {
-      return retrieveValidators(handle, List.of(validator)).get(0);
-    }
-    return result.get(0);
+  public List<Validator> registerValidators(final Handle handle, final List<Bytes> validators) {
+    // adapted from https://stackoverflow.com/a/66704110/535610
+    return handle
+        .createQuery(
+            String.format(
+                "SELECT v_id as id, v_public_key as public_key FROM upsert_validators(array[%s])",
+                buildArrayArgument(validators)))
+        .mapToBean(Validator.class)
+        .list();
   }
 
-  public List<Validator> registerValidators(final Handle handle, final List<Bytes> validators) {
-    final PreparedBatch batch =
-        handle.prepareBatch("INSERT INTO validators (public_key) VALUES (?)");
-    validators.forEach(b -> batch.bind(0, b).add());
-    return batch.executeAndReturnGeneratedKeys().mapToBean(Validator.class).list();
+  private String buildArrayArgument(final List<Bytes> validators) {
+    return validators.stream()
+        .map(Bytes::toUnprefixedHexString)
+        .map(hex -> String.format("decode('%s','hex')", hex))
+        .collect(Collectors.joining(","));
   }
 
   public List<Validator> retrieveValidators(
@@ -59,5 +55,32 @@ public class ValidatorsDao {
         .createQuery("SELECT id, public_key FROM validators")
         .mapToBean(Validator.class)
         .stream();
+  }
+
+  public boolean isEnabled(final Handle handle, final int validatorId) {
+    return handle
+        .createQuery("SELECT enabled FROM validators WHERE id = ?")
+        .bind(0, validatorId)
+        .mapTo(Boolean.class)
+        .findFirst()
+        .orElse(false);
+  }
+
+  public void setEnabled(final Handle handle, final int validatorId, final boolean enabled) {
+    handle
+        .createUpdate("UPDATE validators SET enabled = :enabled WHERE id = :validator_id")
+        .bind("validator_id", validatorId)
+        .bind("enabled", enabled)
+        .execute();
+  }
+
+  public boolean hasSigned(final Handle handle, final int validatorId) {
+    return handle
+        .createQuery(
+            "SELECT EXISTS(SELECT 1 FROM SIGNED_ATTESTATIONS WHERE validator_id = :validatorId)"
+                + " OR EXISTS(SELECT 1 FROM SIGNED_BLOCKS WHERE validator_id = :validatorId)")
+        .bind("validatorId", validatorId)
+        .mapTo(Boolean.class)
+        .one();
   }
 }

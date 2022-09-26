@@ -15,11 +15,11 @@ package tech.pegasys.web3signer.tests.comparison;
 import static tech.pegasys.web3signer.dsl.lotus.FilecoinKeyType.BLS;
 import static tech.pegasys.web3signer.dsl.lotus.FilecoinKeyType.SECP256K1;
 
-import tech.pegasys.web3signer.core.signing.KeyType;
 import tech.pegasys.web3signer.dsl.lotus.FilecoinKey;
 import tech.pegasys.web3signer.dsl.lotus.LotusNode;
 import tech.pegasys.web3signer.dsl.signer.SignerConfigurationBuilder;
 import tech.pegasys.web3signer.dsl.utils.MetadataFileHelpers;
+import tech.pegasys.web3signer.signing.KeyType;
 import tech.pegasys.web3signer.tests.AcceptanceTestBase;
 
 import java.nio.file.Path;
@@ -34,9 +34,9 @@ public class CompareApisAcceptanceTestBase extends AcceptanceTestBase {
       new LotusNode(Integer.parseInt(System.getenv("LOTUS_PORT")));
   protected static final int NO_OF_BLS_KEYS = 2;
   protected static final int NO_OF_SECP_KEYS = 2;
-  protected static Map<String, FilecoinKey> addressMap =
+  protected static final Map<String, FilecoinKey> ADDRESS_MAP =
       LOTUS_NODE.createKeys(NO_OF_BLS_KEYS, NO_OF_SECP_KEYS);
-  protected static Map<String, FilecoinKey> nonExistentAddressMap =
+  protected static final Map<String, FilecoinKey> NON_EXISTENT_ADDRESS_MAP =
       Map.of(
           "f3q7sj7rgvvlfpc7gx7z7jeco5x3q3aa4g6s54w3rl5alzdb6xa422seznjmtp7agboegcvrakcv22eo5bjlna",
           new FilecoinKey(
@@ -66,7 +66,7 @@ public class CompareApisAcceptanceTestBase extends AcceptanceTestBase {
   }
 
   private void initSignerKeystoreDirectory() {
-    addressMap.forEach(
+    ADDRESS_MAP.forEach(
         (fcAddress, key) ->
             metadataFileHelpers.createUnencryptedYamlFileAt(
                 keyConfigFile(fcAddress),

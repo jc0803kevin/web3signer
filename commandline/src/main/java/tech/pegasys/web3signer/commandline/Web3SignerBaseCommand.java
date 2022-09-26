@@ -16,20 +16,20 @@ import static tech.pegasys.web3signer.commandline.DefaultCommandValues.CONFIG_FI
 import static tech.pegasys.web3signer.commandline.DefaultCommandValues.MANDATORY_FILE_FORMAT_HELP;
 import static tech.pegasys.web3signer.commandline.DefaultCommandValues.MANDATORY_HOST_FORMAT_HELP;
 import static tech.pegasys.web3signer.commandline.DefaultCommandValues.MANDATORY_PORT_FORMAT_HELP;
-import static tech.pegasys.web3signer.core.metrics.Web3SignerMetricCategory.DEFAULT_METRIC_CATEGORIES;
+import static tech.pegasys.web3signer.common.Web3SignerMetricCategory.DEFAULT_METRIC_CATEGORIES;
 
 import tech.pegasys.web3signer.commandline.config.AllowListHostsProperty;
 import tech.pegasys.web3signer.commandline.config.PicoCliTlsServerOptions;
 import tech.pegasys.web3signer.commandline.config.PicoCliTlsServerOptionsValidator;
 import tech.pegasys.web3signer.commandline.convertor.MetricCategoryConverter;
+import tech.pegasys.web3signer.common.Web3SignerMetricCategory;
 import tech.pegasys.web3signer.core.config.Config;
 import tech.pegasys.web3signer.core.config.TlsOptions;
-import tech.pegasys.web3signer.core.metrics.Web3SignerMetricCategory;
-import tech.pegasys.web3signer.slashingprotection.SlashingMetricCategory;
 
 import java.io.File;
 import java.net.InetAddress;
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -49,7 +49,7 @@ import picocli.CommandLine.Spec;
 @Command(
     description =
         "This command runs the Web3Signer.\n"
-            + "Documentation can be found at https://docs.web3signer.pegasys.tech.",
+            + "Documentation can be found at https://docs.web3signer.consensys.net .",
     abbreviateSynopsis = true,
     name = "web3signer",
     sortOptions = false,
@@ -116,6 +116,13 @@ public class Web3SignerBaseCommand implements Config, Runnable {
           "Comma separated list of hostnames to allow for http access, or * to accept any host (default: ${DEFAULT-VALUE})",
       defaultValue = "localhost,127.0.0.1")
   private final AllowListHostsProperty httpHostAllowList = new AllowListHostsProperty();
+
+  // A list of origins URLs that are accepted by the JsonRpcHttpServer (CORS)
+  @Option(
+      names = {"--http-cors-origins"},
+      description = "Comma separated origin domain URLs for CORS validation (default: none)")
+  private final CorsAllowedOriginsProperty httpCorsAllowedOrigins =
+      new CorsAllowedOriginsProperty();
 
   @Option(
       names = {"--metrics-enabled"},
@@ -196,6 +203,11 @@ public class Web3SignerBaseCommand implements Config, Runnable {
   }
 
   @Override
+  public Collection<String> getCorsAllowedOrigins() {
+    return httpCorsAllowedOrigins;
+  }
+
+  @Override
   public Path getDataPath() {
     return dataPath;
   }
@@ -264,6 +276,7 @@ public class Web3SignerBaseCommand implements Config, Runnable {
         .add("httpListenHost", httpListenHost)
         .add("httpListenPort", httpListenPort)
         .add("httpHostAllowList", httpHostAllowList)
+        .add("corsAllowedOrigins", httpCorsAllowedOrigins)
         .add("metricsEnabled", metricsEnabled)
         .add("metricsHost", metricsHost)
         .add("metricsPort", metricsPort)
@@ -293,7 +306,6 @@ public class Web3SignerBaseCommand implements Config, Runnable {
     public Web3signerMetricCategoryConverter() {
       addCategories(Web3SignerMetricCategory.class);
       addCategories(StandardMetricCategory.class);
-      addCategories(SlashingMetricCategory.class);
     }
   }
 }

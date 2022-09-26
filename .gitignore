@@ -4,7 +4,6 @@
 *~.nib
 *.iml
 *.launch
-*.swp
 *.log
 .classpath
 .DS_Store
@@ -27,3 +26,5 @@ tmp/
 build/
 out/
 docker/reports/*
+.vscode
+.lh/*

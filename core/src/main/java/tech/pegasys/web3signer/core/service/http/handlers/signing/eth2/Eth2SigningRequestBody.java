@@ -27,16 +27,18 @@ public class Eth2SigningRequestBody {
   private final ArtifactType type;
   private final Bytes signingRoot;
   private final ForkInfo fork_info;
-  private final BeaconBlock beaconBlock;
+  private final BeaconBlock beaconBlock; // phase 0
+  private final BlockRequest blockRequest; // altair and onward
   private final AttestationData attestation;
   private final AggregationSlot aggregation_slot;
   private final AggregateAndProof aggregate_and_proof;
   private final VoluntaryExit voluntary_exit;
   private final RandaoReveal randao_reveal;
   private final DepositMessage deposit;
-  private final SyncCommitteeSignature syncCommitteeSignature;
+  private final SyncCommitteeMessage syncCommitteeMessage;
   private final SyncAggregatorSelectionData syncAggregatorSelectionData;
   private final ContributionAndProof contributionAndProof;
+  private final ValidatorRegistration validatorRegistration;
 
   @JsonCreator
   public Eth2SigningRequestBody(
@@ -44,29 +46,33 @@ public class Eth2SigningRequestBody {
       @JsonProperty("signingRoot") final Bytes signingRoot,
       @JsonProperty("fork_info") final ForkInfo fork_info,
       @JsonProperty("block") final BeaconBlock block,
+      @JsonProperty("beacon_block") final BlockRequest blockRequest,
       @JsonProperty("attestation") final AttestationData attestation,
       @JsonProperty("aggregation_slot") final AggregationSlot aggregation_slot,
       @JsonProperty("aggregate_and_proof") final AggregateAndProof aggregate_and_proof,
       @JsonProperty("voluntary_exit") final VoluntaryExit voluntary_exit,
       @JsonProperty("randao_reveal") final RandaoReveal randao_reveal,
       @JsonProperty("deposit") final DepositMessage deposit,
-      @JsonProperty("sync_committee_signature") final SyncCommitteeSignature syncCommitteeSignature,
+      @JsonProperty("sync_committee_message") final SyncCommitteeMessage syncCommitteeMessage,
       @JsonProperty("sync_aggregator_selection_data")
           final SyncAggregatorSelectionData syncAggregatorSelectionData,
-      @JsonProperty("contribution_and_proof") final ContributionAndProof contributionAndProof) {
+      @JsonProperty("contribution_and_proof") final ContributionAndProof contributionAndProof,
+      @JsonProperty("validator_registration") final ValidatorRegistration validatorRegistration) {
     this.type = type;
     this.signingRoot = signingRoot;
     this.fork_info = fork_info;
     this.beaconBlock = block;
+    this.blockRequest = blockRequest;
     this.attestation = attestation;
     this.aggregation_slot = aggregation_slot;
     this.aggregate_and_proof = aggregate_and_proof;
     this.voluntary_exit = voluntary_exit;
     this.randao_reveal = randao_reveal;
     this.deposit = deposit;
-    this.syncCommitteeSignature = syncCommitteeSignature;
+    this.syncCommitteeMessage = syncCommitteeMessage;
     this.syncAggregatorSelectionData = syncAggregatorSelectionData;
     this.contributionAndProof = contributionAndProof;
+    this.validatorRegistration = validatorRegistration;
   }
 
   @JsonProperty("type")
@@ -82,6 +88,11 @@ public class Eth2SigningRequestBody {
   @JsonProperty("block")
   public BeaconBlock getBlock() {
     return beaconBlock;
+  }
+
+  @JsonProperty("beacon_block")
+  public BlockRequest getBlockRequest() {
+    return blockRequest;
   }
 
   @JsonProperty("attestation")
@@ -119,9 +130,9 @@ public class Eth2SigningRequestBody {
     return deposit;
   }
 
-  @JsonProperty("sync_committee_signature")
-  public SyncCommitteeSignature getSyncCommitteeSignature() {
-    return syncCommitteeSignature;
+  @JsonProperty("sync_committee_message")
+  public SyncCommitteeMessage getSyncCommitteeMessage() {
+    return syncCommitteeMessage;
   }
 
   @JsonProperty("sync_aggregator_selection_data")
@@ -132,5 +143,10 @@ public class Eth2SigningRequestBody {
   @JsonProperty("contribution_and_proof")
   public ContributionAndProof getContributionAndProof() {
     return contributionAndProof;
+  }
+
+  @JsonProperty("validator_registration")
+  public ValidatorRegistration getValidatorRegistration() {
+    return validatorRegistration;
   }
 }

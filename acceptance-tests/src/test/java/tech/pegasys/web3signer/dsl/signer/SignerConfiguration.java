@@ -12,11 +12,14 @@
  */
 package tech.pegasys.web3signer.dsl.signer;
 
-import tech.pegasys.web3signer.core.config.AzureKeyVaultParameters;
 import tech.pegasys.web3signer.core.config.TlsOptions;
 import tech.pegasys.web3signer.dsl.tls.TlsCertificateDefinition;
+import tech.pegasys.web3signer.signing.config.AwsSecretsManagerParameters;
+import tech.pegasys.web3signer.signing.config.AzureKeyVaultParameters;
+import tech.pegasys.web3signer.signing.config.KeystoresParameters;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -36,8 +39,10 @@ public class SignerConfiguration {
   private final List<String> metricsCategories;
   private final boolean metricsEnabled;
   private final Optional<AzureKeyVaultParameters> azureKeyVaultParameters;
-  private Optional<TlsOptions> serverTlsOptions;
-  private Optional<TlsCertificateDefinition> overriddenCaTrustStore;
+  private final Optional<AwsSecretsManagerParameters> awsSecretsManagerParameters;
+  private final Optional<KeystoresParameters> keystoresParameters;
+  private final Optional<TlsOptions> serverTlsOptions;
+  private final Optional<TlsCertificateDefinition> overriddenCaTrustStore;
   private final int metricsPort;
   private final String mode;
   private final Optional<String> slashingProtectionDbUrl;
@@ -56,6 +61,11 @@ public class SignerConfiguration {
   private final long slashingPruningInterval;
   private final Optional<Long> altairForkEpoch;
 
+  private final Optional<Long> bellatrixForkEpoch;
+  private final Optional<String> network;
+  private final boolean keyManagerApiEnabled;
+  private final Duration startupTimeout;
+
   public SignerConfiguration(
       final String hostname,
       final int httpRpcPort,
@@ -67,6 +77,8 @@ public class SignerConfiguration {
       final List<String> metricsCategories,
       final boolean metricsEnabled,
       final Optional<AzureKeyVaultParameters> azureKeyVaultParameters,
+      final Optional<AwsSecretsManagerParameters> awsSecretsManagerParameters,
+      final Optional<KeystoresParameters> keystoresParameters,
       final Optional<TlsOptions> serverTlsOptions,
       final Optional<TlsCertificateDefinition> overriddenCaTrustStore,
       final Optional<String> slashingProtectionDbUrl,
@@ -74,6 +86,7 @@ public class SignerConfiguration {
       final String slashingProtectionDbPassword,
       final String mode,
       final Optional<Map<String, String>> web3SignerEnvironment,
+      final Duration startupTimeout,
       final boolean enableSlashing,
       final Optional<Path> slashingExportPath,
       final Optional<Path> slashingImportPath,
@@ -84,7 +97,10 @@ public class SignerConfiguration {
       final boolean swaggerUIEnabled,
       final boolean useConfigFile,
       final Optional<Path> slashingDbPoolConfigurationFile,
-      final Optional<Long> altairForkEpoch) {
+      final Optional<Long> altairForkEpoch,
+      final Optional<Long> bellatrixForkEpoch,
+      final Optional<String> network,
+      final boolean keyManagerApiEnabled) {
     this.hostname = hostname;
     this.logLevel = logLevel;
     this.httpRpcPort = httpRpcPort;
@@ -95,6 +111,8 @@ public class SignerConfiguration {
     this.metricsCategories = metricsCategories;
     this.metricsEnabled = metricsEnabled;
     this.azureKeyVaultParameters = azureKeyVaultParameters;
+    this.awsSecretsManagerParameters = awsSecretsManagerParameters;
+    this.keystoresParameters = keystoresParameters;
     this.serverTlsOptions = serverTlsOptions;
     this.overriddenCaTrustStore = overriddenCaTrustStore;
     this.slashingProtectionDbUrl = slashingProtectionDbUrl;
@@ -102,6 +120,7 @@ public class SignerConfiguration {
     this.slashingProtectionDbPassword = slashingProtectionDbPassword;
     this.mode = mode;
     this.web3SignerEnvironment = web3SignerEnvironment;
+    this.startupTimeout = startupTimeout;
     this.enableSlashing = enableSlashing;
     this.slashingExportPath = slashingExportPath;
     this.slashingImportPath = slashingImportPath;
@@ -113,6 +132,9 @@ public class SignerConfiguration {
     this.useConfigFile = useConfigFile;
     this.slashingProtectionDbPoolConfigurationFile = slashingDbPoolConfigurationFile;
     this.altairForkEpoch = altairForkEpoch;
+    this.bellatrixForkEpoch = bellatrixForkEpoch;
+    this.network = network;
+    this.keyManagerApiEnabled = keyManagerApiEnabled;
   }
 
   public String hostname() {
@@ -165,6 +187,14 @@ public class SignerConfiguration {
 
   public Optional<AzureKeyVaultParameters> getAzureKeyVaultParameters() {
     return azureKeyVaultParameters;
+  }
+
+  public Optional<AwsSecretsManagerParameters> getAwsSecretsManagerParameters() {
+    return awsSecretsManagerParameters;
+  }
+
+  public Optional<KeystoresParameters> getKeystoresParameters() {
+    return keystoresParameters;
   }
 
   public boolean isMetricsDynamicPortAllocation() {
@@ -233,5 +263,21 @@ public class SignerConfiguration {
 
   public Optional<Long> getAltairForkEpoch() {
     return altairForkEpoch;
+  }
+
+  public Optional<Long> getBellatrixForkEpoch() {
+    return bellatrixForkEpoch;
+  }
+
+  public Optional<String> getNetwork() {
+    return network;
+  }
+
+  public boolean isKeyManagerApiEnabled() {
+    return keyManagerApiEnabled;
+  }
+
+  public Duration getStartupTimeout() {
+    return startupTimeout;
   }
 }
